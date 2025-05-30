@@ -1,0 +1,29 @@
+# OERSync-AI Environment Configuration
+
+# Service Configuration
+LOG_LEVEL=INFO
+DEBUG=false
+
+# LLM API Keys (für LLM-Orchestrator)
+OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Service URLs (für Development)
+EXTRACTOR_URL=http://localhost:8001
+LLM_ORCHESTRATOR_URL=http://localhost:8002
+GATEWAY_URL=http://localhost:8000
+
+# Redis Configuration (für Gateway)
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=
+
+# Database (optional für zukünftige Erweiterungen)
+DATABASE_URL=
+
+# File Upload Limits
+MAX_FILE_SIZE_MB=100
+ALLOWED_EXTENSIONS=.mbz,.zip
+
+# Processing Configuration
+MAX_CONCURRENT_JOBS=5
+JOB_TIMEOUT_SECONDS=300 

@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # Extractor Service
+  extractor:
+    build:
+      context: ./services/extractor
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    environment:
+      - SERVICE_NAME=extractor
+      - SERVICE_PORT=8000
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./services/extractor:/app
+      - ./shared:/app/shared
+      - ./examples:/app/examples
+    networks:
+      - oersync-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # LLM Orchestrator Service
+  llm-orchestrator:
+    build:
+      context: ./services/llm-orchestrator
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8000"
+    environment:
+      - SERVICE_NAME=llm-orchestrator
+      - SERVICE_PORT=8000
+      - LOG_LEVEL=INFO
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./services/llm-orchestrator:/app
+      - ./shared:/app/shared
+    networks:
+      - oersync-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # API Gateway
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - SERVICE_NAME=gateway
+      - SERVICE_PORT=8000
+      - LOG_LEVEL=INFO
+      - EXTRACTOR_URL=http://extractor:8000
+      - LLM_ORCHESTRATOR_URL=http://llm-orchestrator:8000
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./services/gateway:/app
+      - ./shared:/app/shared
+    depends_on:
+      - extractor
+      - llm-orchestrator
+      - redis
+    networks:
+      - oersync-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis for rate limiting and caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - oersync-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  oersync-network:
+    driver: bridge
+
+volumes:
+  redis_data: 

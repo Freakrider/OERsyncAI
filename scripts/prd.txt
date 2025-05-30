@@ -1,0 +1,88 @@
+# OERSync-AI Product Requirements Document
+
+## Projektübersicht
+
+OERSync-AI ist eine Middleware-Lösung zur Extraktion und KI-gestützten Strukturierung von Metadaten aus Moodle-Kursbackup-Dateien (.mbz). Das System verwendet LLM-Technologie, um didaktisch orientierte Informationen zu generieren und diese als Materialempfehlungen oder Lernpfade darzustellen.
+
+## Technische Architektur
+
+### 1. Extractor & Metadata-Mapper Service
+- **Framework**: Python-Microservice mit FastAPI
+- **Funktionen**:
+  - .mbz Dateien entpacken (zipfile)
+  - XML-Dateien lesen (lxml)
+  - Metadaten extrahieren (Kursname, Abschnitte, Aktivitäten)
+  - Dublin-Core-JSON Mapping
+
+### 2. LLM-Orchestrator Service
+- **Framework**: Python-Microservice mit FastAPI
+- **LLM-Integration**: LangChain oder LangGraph
+- **Funktionen**:
+  - POST-Endpunkt für Metadata-JSON
+  - Chain/Graph-Pipeline für didaktische Strukturierung
+  - Abschnittstitel, Lernziele und Materialempfehlungen generieren
+  - JSON-Response
+
+### 3. API-Gateway
+- **Framework**: FastAPI integriertes Routing
+- **Routen**:
+  - /extract → Extractor-Service
+  - /structure → LLM-Orchestrator
+  - /health → Health-Check
+
+### 4. In-Memory-Simulation
+- Embeddings temporär in Listen halten
+- Kein Vektor-DB für ersten Prototypen
+- RAG-Komponente optional
+
+## Technologie-Stack
+
+### Backend
+- Python 3.11+
+- FastAPI (API Framework)
+- LangChain/LangGraph (LLM-Orchestrierung)
+- lxml (XML-Verarbeitung)
+- zipfile (Archiv-Extraktion)
+- Pydantic (Datenvalidierung)
+- Dublin Core Metadata Schema
+
+### Deployment
+- Docker & Docker Compose
+- python:3.11-slim Base Image
+- Multi-Container Setup
+
+### Testing & Demo
+- Beispiel .mbz Upload
+- JSON-Response Validierung
+- Prompt-Optimierung
+
+## Entwicklungsphasen
+
+### Phase 1: Core Extraction
+- Basis-Microservices implementieren
+- .mbz Entpackung und XML-Parsing
+- Dublin Core Mapping
+
+### Phase 2: LLM-Integration
+- LangChain Pipeline
+- Didaktische Strukturierung
+- Prompt Engineering
+
+### Phase 3: API-Integration
+- Gateway Implementierung
+- Service-zu-Service Kommunikation
+- Error Handling
+
+### Phase 4: Deployment & Testing
+- Docker Containerisierung
+- Demo-Implementation
+- Feedback-Integration
+
+## Zukünftige Erweiterungen
+- ILIAS-Backup Support
+- Vektor-Datenbank Integration
+- Web-UI Development
+- Advanced RAG-Features
+
+## Open Source Lizenz
+Das Projekt wird unter Open Source Lizenz bereitgestellt. 
