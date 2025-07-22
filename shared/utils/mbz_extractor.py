@@ -378,9 +378,20 @@ class MBZExtractor:
         elif path_str == 'course/course.xml':
             result.course_xml = full_path
             
-        # Aktivitäten
-        elif path_str.startswith('activities/') and path_str.endswith('/module.xml'):
-            result.activities.append(full_path)
+        # Aktivitäten - suche nach {activity_type}.xml statt module.xml
+        elif path_str.startswith('activities/') and path_str.count('/') == 2:
+            # Format: activities/page_34/page.xml
+            parts = path_str.split('/')
+            if len(parts) == 3:
+                activity_folder = parts[1]  # z.B. "page_34"
+                xml_file = parts[2]  # z.B. "page.xml"
+                
+                # Prüfe ob XML-Datei dem Ordnernamen entspricht
+                activity_type = activity_folder.split('_')[0]  # z.B. "page"
+                expected_xml = f"{activity_type}.xml"
+                
+                if xml_file == expected_xml:
+                    result.activities.append(full_path)
             
         # Abschnitte
         elif path_str.startswith('sections/') and path_str.endswith('/section.xml'):

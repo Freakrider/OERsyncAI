@@ -11,9 +11,16 @@ import uuid
 import tempfile
 import asyncio
 import time
+import subprocess
+import shlex
+import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -28,7 +35,7 @@ import structlog
 
 # Import our extraction pipeline
 from shared.utils.mbz_extractor import MBZExtractor
-from shared.utils.xml_parser import parse_moodle_backup_complete
+from shared.utils.xml_parser import parse_moodle_backup_complete, XMLParser
 from shared.utils.metadata_mapper import create_complete_extracted_data
 from shared.utils.file_utils import validate_mbz_file
 
@@ -164,11 +171,24 @@ async def process_mbz_extraction(job_id: str, file_path: Path, original_filename
                        course_name=extracted_data.course_name)
         except Exception as e:
             logger.warning("XML parsing failed, using minimal data", job_id=job_id, error=str(e))
-            # If full parsing fails, create minimal extracted data
-            from shared.utils.xml_parser import XMLParser
+            # Fallback: Aktivitäten trotzdem extrahieren
             parser = XMLParser()
             backup_info = parser.parse_moodle_backup_xml(extraction_result.moodle_backup_xml)
-            extracted_data = create_complete_extracted_data(backup_info)
+            activities = []
+            activities_dir = temp_dir / "extracted" / "activities"
+            if activities_dir.exists() and activities_dir.is_dir():
+                for activity_dir in activities_dir.iterdir():
+                    if activity_dir.is_dir():
+                        # Parse activity type from folder name (e.g., "page_34" -> "page")
+                        activity_type = activity_dir.name.split('_')[0]
+                        activity_xml = activity_dir / f"{activity_type}.xml"
+                        if activity_xml.exists():
+                            try:
+                                activity_metadata = parser.parse_activity_xml(activity_xml)
+                                activities.append(activity_metadata)
+                            except Exception as e2:
+                                logger.warning("Fehler beim Parsen einer Activity im Fallback", file=str(activity_xml), error=str(e2))
+            extracted_data = create_complete_extracted_data(backup_info, activities=activities)
         
         update_job_status(job_id, "processing", "Creating metadata mappings...")
         
@@ -223,7 +243,11 @@ async def process_mbz_extraction(job_id: str, file_path: Path, original_filename
                 "skills": extracted_data.educational.skills,
                 "assessment_type": extracted_data.educational.assessment_type,
                 "interactivity_type": extracted_data.educational.interactivity_type
-            }
+            },
+            
+            # Sections und Activities
+            "sections": extracted_data.sections,
+            "activities": extracted_data.activities
         }
         
         processing_time = time.time() - start_time
@@ -430,6 +454,175 @@ async def global_exception_handler(request, exc):
         status_code=500,
         content={"error": "Internal server error", "message": str(exc)}
     )
+
+@app.post("/start-moodle-instance/{job_id}")
+async def start_moodle_instance(job_id: str):
+    """
+    Starte eine Gitpod Moodle-Instanz basierend auf den extrahierten Metadaten
+    """
+    try:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail="Job nicht gefunden")
+        
+        job_data = jobs[job_id]
+        if job_data["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Extraktion noch nicht abgeschlossen")
+        
+        extracted_data = job_data["extracted_data"]
+        moodle_version = extracted_data.get("moodle_version", "4.1")
+        
+        # Bestimme Branch basierend auf Moodle Version
+        if moodle_version.startswith("4."):
+            branch = "MOODLE_401_STABLE"  # Aktueller 4.x Branch
+        elif moodle_version.startswith("3."):
+            branch = "MOODLE_311_STABLE"  # Legacy 3.x Branch
+        else:
+            branch = "main"  # Fallback auf main
+            
+        # Einfache Gitpod-URL für Moodle-Docker
+        context_url = "https://gitpod.io/#https://github.com/moodlehq/moodle-docker"
+        
+        # Prüfe ob Gitpod-Environment-Variablen gesetzt sind
+        gitpod_token = os.getenv('GITPOD_TOKEN')
+        gitpod_org_id = os.getenv('GITPOD_ORG_ID') 
+        gitpod_owner_id = os.getenv('GITPOD_OWNER_ID')
+        
+        if not all([gitpod_token, gitpod_org_id, gitpod_owner_id]):
+            return {
+                "context_url": context_url,
+                "manual_start": True,
+                "message": "Gitpod-Credentials nicht konfiguriert. Bitte manuell starten.",
+                "instructions": f"Öffne diese URL: {context_url}"
+            }
+        
+        # Starte Gitpod-Instanz automatisch
+        try:
+            cmd = [
+                "python", "start_gitpod.py", 
+                context_url
+            ]
+            
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=30,
+                cwd=".."  # Gehe zum Projekt-Root
+            )
+            
+            if result.returncode == 0:
+                # Parse Workspace-URL aus Output
+                output_lines = result.stdout.strip().split('\n')
+                workspace_url = None
+                workspace_id = None
+                
+                for line in output_lines:
+                    if "URL:" in line:
+                        workspace_url = line.split("URL:")[1].strip()
+                    elif "ID:" in line:
+                        workspace_id = line.split("ID:")[1].strip()
+                
+                return {
+                    "success": True,
+                    "workspace_url": workspace_url,
+                    "workspace_id": workspace_id,
+                    "context_url": context_url,
+                    "moodle_version": moodle_version,
+                    "branch": branch,
+                    "message": "Moodle-Instanz erfolgreich gestartet!"
+                }
+            else:
+                logger.error(f"Gitpod-Start fehlgeschlagen: {result.stderr}")
+                return {
+                    "success": False,
+                    "error": result.stderr,
+                    "context_url": context_url,
+                    "manual_start": True,
+                    "message": "Automatischer Start fehlgeschlagen. Bitte manuell öffnen."
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": "Timeout beim Starten der Gitpod-Instanz",
+                "context_url": context_url,
+                "manual_start": True
+            }
+        except Exception as e:
+            logger.error(f"Fehler beim Gitpod-Start: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "context_url": context_url,
+                "manual_start": True
+            }
+            
+    except Exception as e:
+        logger.error(f"Fehler in start_moodle_instance: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Interner Serverfehler: {str(e)}")
+
+@app.post("/extract-activities")
+async def extract_activities(file: UploadFile = File(...)):
+    """
+    Extrahiere Aktivitäten aus einer hochgeladenen MBZ-Datei und gebe sie als JSON zurück.
+    """
+    import shutil
+    activities = []
+    temp_file = None
+    extraction_result = None
+    try:
+        if not file.filename or not file.filename.endswith('.mbz'):
+            raise HTTPException(status_code=400, detail="Invalid file type. Only .mbz files are allowed.")
+        # Speichere Datei temporär
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(suffix=".mbz", delete=False)
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        mbz_path = Path(temp_file.name)
+        # Extrahiere MBZ
+        extraction_result = extract_mbz_file(mbz_path)
+        # Parse Aktivitäten
+        try:
+            extracted_data = parse_moodle_backup_complete(
+                backup_xml_path=extraction_result.moodle_backup_xml,
+                course_xml_path=extraction_result.course_xml,
+                sections_path=Path(extraction_result.temp_dir, "extracted", "sections"),
+                activities_path=Path(extraction_result.temp_dir, "extracted", "activities")
+            )
+        except Exception as e:
+            # Fallback: Aktivitäten trotzdem extrahieren
+            parser = XMLParser()
+            backup_info = parser.parse_moodle_backup_xml(extraction_result.moodle_backup_xml)
+            activities = []
+            activities_dir = Path(extraction_result.temp_dir, "extracted", "activities")
+            if activities_dir.exists() and activities_dir.is_dir():
+                for activity_dir in activities_dir.iterdir():
+                    if activity_dir.is_dir():
+                        # Parse activity type from folder name (e.g., "page_34" -> "page")
+                        activity_type = activity_dir.name.split('_')[0]
+                        activity_xml = activity_dir / f"{activity_type}.xml"
+                        if activity_xml.exists():
+                            try:
+                                activity_metadata = parser.parse_activity_xml(activity_xml)
+                                activities.append(activity_metadata)
+                            except Exception as e2:
+                                pass
+            extracted_data = create_complete_extracted_data(backup_info, activities=activities)
+        activities = [a.__dict__ for a in extracted_data.activities]
+        return {"activities": activities}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Fehler bei der Extraktion: {str(e)}")
+    finally:
+        # Cleanup
+        try:
+            if temp_file is not None:
+                os.unlink(temp_file.name)
+            if extraction_result is not None:
+                extraction_result.temp_dir and shutil.rmtree(extraction_result.temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     logger.info("Starting OERSync-AI Extractor Service")

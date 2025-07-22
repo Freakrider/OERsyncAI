@@ -124,73 +124,79 @@ class XMLParser:
 
     def parse_xml_file(self, xml_path: Path) -> etree.Element:
         """
-        Parst eine XML-Datei sicher mit automatischer Bereinigung
+        Parst eine XML-Datei sicher
         
         Args:
             xml_path: Pfad zur XML-Datei
             
         Returns:
-            XML Element Tree Root
+            XML Root Element
             
         Raises:
             XMLParsingError: Bei Parsing-Fehlern
         """
-        if not xml_path.exists():
-            raise XMLParsingError(f"XML-Datei nicht gefunden: {xml_path}")
-            
         try:
-            # Lese und bereinige XML-Inhalt
-            with open(xml_path, 'r', encoding='utf-8') as f:
+            # Lese Dateiinhalt
+            with open(xml_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            # Entferne problematische Zeichen am Ende (wie % oder andere Artefakte)
-            content = content.strip()
+            # Bereinige beschädigte XML-Dateien
+            content = self._clean_xml_content(content)
             
-            # Entferne alles nach dem schließenden Root-Tag
-            # Finde das letzte schließende Tag
-            # Suche nach dem letzten schließenden Tag (z.B. </course>, </section>, etc.)
-            last_closing_tag = None
-            for match in re.finditer(r'</[^>]+>', content):
-                last_closing_tag = match
-            
-            if last_closing_tag:
-                # Schneide alles nach dem letzten schließenden Tag ab
-                content = content[:last_closing_tag.end()]
-            
-            # Parse den bereinigten Inhalt
-            root = etree.fromstring(content, self.parser)
+            # Parse mit ElementTree
+            root = etree.fromstring(content)
             return root
             
         except etree.ParseError as e:
-            # Versuche alternative Bereinigung bei Parse-Fehlern
+            # Versuche alternative Bereinigung
+            self.logger.warning("XML-Parse-Fehler, versuche alternative Bereinigung", 
+                              component="XMLParser", error=str(e), file=str(xml_path))
+            
             try:
-                self.logger.warning(
-                    "XML-Parse-Fehler, versuche alternative Bereinigung",
-                    file=str(xml_path),
-                    error=str(e)
-                )
-                
-                # Lese Datei erneut und versuche aggressivere Bereinigung
-                with open(xml_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # Entferne alle Zeichen nach dem letzten >
-                last_bracket = content.rfind('>')
-                if last_bracket != -1:
-                    content = content[:last_bracket + 1]
-                
-                # Entferne Null-Bytes und andere problematische Zeichen
-                content = content.replace('\x00', '').replace('%', '')
-                
-                root = etree.fromstring(content, self.parser)
-                self.logger.info("XML erfolgreich mit alternativer Bereinigung geparst", file=str(xml_path))
+                # Aggressivere Bereinigung
+                cleaned_content = self._clean_xml_content_aggressive(content)
+                root = etree.fromstring(cleaned_content)
                 return root
                 
-            except Exception as e2:
+            except etree.ParseError as e2:
                 raise XMLParsingError(f"XML-Syntax-Fehler in {xml_path}: {e} (auch nach Bereinigung: {e2})")
                 
         except Exception as e:
-            raise XMLParsingError(f"Fehler beim Parsen von {xml_path}: {e}")
+            raise XMLParsingError(f"Fehler beim Lesen der XML-Datei {xml_path}: {e}")
+    
+    def _clean_xml_content(self, content: str) -> str:
+        """Bereinigt XML-Inhalt von häufigen Beschädigungen"""
+        # Entferne ungültige Zeichen am Ende
+        content = content.rstrip()
+        
+        # Entferne % Zeichen am Ende (häufige Beschädigung in MBZ-Exports)
+        if content.endswith('%'):
+            content = content[:-1]
+        
+        # Stelle sicher, dass XML korrekt endet
+        if not content.endswith('>'):
+            # Suche nach dem letzten schließenden Tag
+            last_closing = content.rfind('>')
+            if last_closing != -1:
+                content = content[:last_closing + 1]
+        
+        return content
+    
+    def _clean_xml_content_aggressive(self, content: str) -> str:
+        """Aggressivere XML-Bereinigung für stark beschädigte Dateien"""
+        # Entferne alle ungültigen Zeichen am Ende
+        content = content.rstrip()
+        
+        # Entferne alles nach dem letzten gültigen XML-Tag
+        lines = content.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('%') and not line.endswith('%'):
+                cleaned_lines.append(line)
+        
+        return '\n'.join(cleaned_lines)
 
     def parse_moodle_backup_xml(self, backup_xml_path: Path) -> MoodleBackupInfo:
         """
@@ -399,33 +405,44 @@ class XMLParser:
         return sections
 
     def _parse_single_section(self, section_xml_path: Path) -> MoodleSectionInfo:
-        """Parst eine einzelne section.xml Datei"""
-        root = self.parse_xml_file(section_xml_path)
-        
+        """Parst eine einzelne Section-XML-Datei"""
         try:
-            section = root.find('.//section')
-            if section is None:
-                raise XMLParsingError("Kein 'section' Element gefunden")
+            root = self.parse_xml_file(section_xml_path)
             
-            section_id = int(self._get_text(section.find('id')) or '0')
-            section_number = int(self._get_text(section.find('number')) or '0')
-            name = self._get_text(section.find('name'))
-            summary = self._get_text(section.find('summary'))
+            # Das Root-Element ist direkt <section id="...">
+            section_elem = root
+            if section_elem.tag != 'section':
+                # Fallback: Suche nach section Element
+                section_elem = root.find('.//section')
+                if section_elem is None:
+                    raise XMLParsingError("Kein 'section' Element gefunden")
+            
+            # Section ID
+            section_id = int(section_elem.get('id', '0'))
+            
+            # Section number
+            number_elem = section_elem.find('number')
+            section_number = int(self._get_text(number_elem) or '0')
+            
+            # Section name
+            name = self._get_text(section_elem.find('name'))
+            
+            # Section summary
+            summary = self._get_text(section_elem.find('summary'))
             
             # Visibility
-            visible_elem = section.find('visible')
+            visible_elem = section_elem.find('visible')
             visible = visible_elem is None or self._get_text(visible_elem) != '0'
             
-            # Activities in this section
+            # Activity sequence
+            sequence_elem = section_elem.find('sequence')
+            sequence_text = self._get_text(sequence_elem) or ''
             activities = []
-            sequence_elem = section.find('sequence')
-            if sequence_elem is not None:
-                sequence_text = self._get_text(sequence_elem)
-                if sequence_text:
-                    try:
-                        activities = [int(x) for x in sequence_text.split(',') if x.strip()]
-                    except ValueError:
-                        self.logger.warning("Ungültige Activity-Sequenz", sequence=sequence_text)
+            if sequence_text:
+                try:
+                    activities = [int(x.strip()) for x in sequence_text.split(',') if x.strip()]
+                except ValueError:
+                    pass
             
             return MoodleSectionInfo(
                 section_id=section_id,
@@ -441,10 +458,10 @@ class XMLParser:
 
     def parse_activity_xml(self, activity_xml_path: Path) -> MoodleActivityMetadata:
         """
-        Parst eine activity/module.xml Datei
+        Parst eine activity/{activity_type}.xml Datei
         
         Args:
-            activity_xml_path: Pfad zu module.xml
+            activity_xml_path: Pfad zu {activity_type}.xml
             
         Returns:
             MoodleActivityMetadata Objekt
@@ -457,21 +474,33 @@ class XMLParser:
         root = self.parse_xml_file(activity_xml_path)
         
         try:
+            # Bestimme Activity Type und ID aus Ordnernamen (z.B. "book_33" -> "book", 33)
+            activity_folder = activity_xml_path.parent.name  # z.B. "book_33"
+            activity_type = activity_folder.split('_')[0]  # z.B. "book"
+            
+            # Extrahiere Activity-ID aus Ordnernamen (z.B. "book_33" -> 33)
+            try:
+                activity_id = int(activity_folder.split('_')[1])  # z.B. 33
+            except (IndexError, ValueError):
+                # Fallback: versuche aus XML zu lesen
+                activity_id = int(self._get_text(root.find('.//activity')) or '0')
+            
+            # Suche nach activity Element oder verwende Root
             activity = root.find('.//activity')
             if activity is None:
-                raise XMLParsingError("Kein 'activity' Element gefunden")
+                # Fallback: Verwende Root-Element direkt
+                activity = root
             
             # Basic activity information
-            activity_id = int(self._get_text(activity.find('id')) or '0')
-            module_name = self._get_text(activity.find('modulename')) or "unknown"
+            module_name = self._get_text(activity.find('modulename')) or activity_type
             section_number = int(self._get_text(activity.find('sectionnumber')) or '0')
             
-            # Module specific data
-            module_elem = activity.find(f'.//module')
+            # Module specific data - suche nach verschiedenen möglichen Strukturen
+            module_elem = activity.find(f'.//{activity_type}')
             if module_elem is None:
                 module_elem = activity
                 
-            name = self._get_text(module_elem.find('name')) or f"Activity {activity_id}"
+            name = self._get_text(module_elem.find('name')) or f"{activity_type.title()} {activity_id}"
             intro = self._get_text(module_elem.find('intro'))
             
             # Visibility
@@ -488,7 +517,7 @@ class XMLParser:
             
             # Bestimme Learning Resource Type
             learning_resource_type = self.ACTIVITY_TYPE_MAPPING.get(
-                module_name.lower(), 
+                activity_type.lower(), 
                 LearningResourceType.ACTIVITY
             )
             
@@ -496,11 +525,11 @@ class XMLParser:
             activity_config = {}
             
             # Versuche verschiedene activity-spezifische Felder zu extrahieren
-            if module_name.lower() == 'quiz':
+            if activity_type.lower() == 'quiz':
                 activity_config.update(self._extract_quiz_config(module_elem))
-            elif module_name.lower() == 'assign':
+            elif activity_type.lower() == 'assign':
                 activity_config.update(self._extract_assignment_config(module_elem))
-            elif module_name.lower() == 'forum':
+            elif activity_type.lower() == 'forum':
                 activity_config.update(self._extract_forum_config(module_elem))
             
             return MoodleActivityMetadata(
@@ -694,10 +723,12 @@ def parse_moodle_backup_complete(
     if activities_path and activities_path.exists() and activities_path.is_dir():
         for activity_dir in activities_path.iterdir():
             if activity_dir.is_dir():
-                module_xml = activity_dir / "module.xml"
-                if module_xml.exists():
+                # Parse activity type from folder name (e.g., "page_34" -> "page")
+                activity_type = activity_dir.name.split('_')[0]
+                activity_xml = activity_dir / f"{activity_type}.xml"
+                if activity_xml.exists():
                     try:
-                        activity_metadata = parser.parse_activity_xml(module_xml)
+                        activity_metadata = parser.parse_activity_xml(activity_xml)
                         activities_data.append(activity_metadata)
                     except XMLParsingError as e:
                         logger.warning("Fehler beim Parsen einer Activity", 

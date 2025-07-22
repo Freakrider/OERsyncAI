@@ -1,0 +1,184 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+.header {
+  background: linear-gradient(135deg, #294466 0%, #1e3248 100%);
+  color: white;
+  padding: 50px 40px 40px 40px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.header-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 32px;
+  margin-bottom: 10px;
+}
+.header-logo {
+  height: 48px;
+  max-width: 180px;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.header-logo.orca-logo {
+  background: #0d2d42;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.header-title {
+  margin: 0 16px;
+  font-size: 2.6em;
+  font-weight: 400;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.header p {
+  margin-top: 0;
+  font-size: 1.3em;
+}
+@media (max-width: 900px) {
+  .header {
+    padding: 30px 10px 30px 10px;
+  }
+  .header-row {
+    gap: 16px;
+  }
+  .header-logo {
+    height: 32px;
+    max-width: 100px;
+  }
+  .header-title {
+    font-size: 2em;
+  }
+  .header p {
+    font-size: 1em;
+  }
+}
+@media (max-width: 600px) {
+  .header-row {
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .header-logo {
+    height: 28px;
+    max-width: 80px;
+  }
+  .header-title {
+    font-size: 1.3em;
+    margin: 0;
+  }
+}
+
+.footer {
+  background: linear-gradient(135deg, #294466 0%, #1e3248 100%);
+  color: #fff;
+  padding: 28px 0 18px 0;
+  text-align: center;
+  margin-top: 48px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.footer-logos {
+  display: flex;
+  gap: 36px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.footer-logo {
+  height: 40px;
+  max-width: 160px;
+  object-fit: contain;
+  background: transparent;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.footer-logo.orca-logo {
+  background: #0d2d42;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+.footer-text {
+  color: #e0e6ed;
+  font-size: 0.95em;
+  margin-top: 6px;
+}
+@media (max-width: 600px) {
+  .footer-logos {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .footer-logo {
+    height: 28px;
+    max-width: 90px;
+  }
+}
+
+/* Footer sticky bei wenig Inhalt */
+html, body, #root {
+  height: 100%;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.container {
+  flex: 1 0 auto;
+}
+.footer {
+  flex-shrink: 0;
+}
