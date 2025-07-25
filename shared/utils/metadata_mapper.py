@@ -667,26 +667,8 @@ def create_complete_extracted_data(
                 'activities': section.activities
             })
     
-    activities_data = []
-    if activities:
-        for activity in activities:
-            # Extrahiere echte Aktivitätsdaten aus MoodleActivityMetadata
-            activity_data = {
-                'id': getattr(activity, 'activity_id', 0),
-                'type': getattr(activity, 'activity_type', 'unknown').value if hasattr(getattr(activity, 'activity_type', None), 'value') else 'unknown',
-                'name': getattr(activity, 'module_name', 'Unknown Activity'),
-                'section_number': getattr(activity, 'section_number', 0),
-                'visible': getattr(activity, 'visible', True),
-                'completion_enabled': getattr(activity, 'completion_enabled', False),
-                'time_created': getattr(activity, 'time_created', None),
-                'time_modified': getattr(activity, 'time_modified', None)
-            }
-            
-            # Füge activity_config hinzu, falls vorhanden
-            if hasattr(activity, 'activity_config') and activity.activity_config:
-                activity_data['config'] = activity.activity_config
-                
-            activities_data.append(activity_data)
+    # Activities sollten bereits MoodleActivityMetadata Objekte sein
+    activities_data = activities or []
     
     return MoodleExtractedData(
         course_id=backup_info.original_course_id,
@@ -705,5 +687,8 @@ def create_complete_extracted_data(
         educational=educational,
         sections=sections_data,
         activities=activities_data,
+        files=[],
+        media_collections=[],
+        file_statistics={},
         extraction_timestamp=datetime.now()
     ) 

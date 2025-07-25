@@ -3,7 +3,7 @@
 FastAPI Extractor Service
 
 Microservice für MBZ-Datei-Extraktion und Metadaten-Verarbeitung.
-Bietet asynchrone Job-Verarbeitung mit Status-Tracking.
+Bietet asynchrone Job-Verarbeitung mit Status-Tracking und erweiterte Medienintegration.
 """
 
 import sys
@@ -29,7 +29,7 @@ sys.path.insert(0, str(project_root))
 import uvicorn
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 import structlog
 
@@ -38,6 +38,7 @@ from shared.utils.mbz_extractor import MBZExtractor
 from shared.utils.xml_parser import parse_moodle_backup_complete, XMLParser
 from shared.utils.metadata_mapper import create_complete_extracted_data
 from shared.utils.file_utils import validate_mbz_file
+from shared.models.dublin_core import FileMetadata, MediaCollection, MediaType
 
 # Setup logging
 structlog.configure(
@@ -99,13 +100,53 @@ class HealthResponse(BaseModel):
     uptime_seconds: float
     service: str = "extractor"
 
+class MediaFileResponse(BaseModel):
+    """Response model for media file information"""
+    file_id: str
+    original_filename: str
+    filepath: str
+    mimetype: str
+    filesize: int
+    media_type: str
+    file_extension: str
+    is_image: bool
+    is_video: bool
+    is_document: bool
+    is_audio: bool
+    title: Optional[str] = None
+    description: Optional[str] = None
+    author: Optional[str] = None
+    timecreated: Optional[datetime] = None
+    timemodified: Optional[datetime] = None
+
+class MediaCollectionResponse(BaseModel):
+    """Response model for media collection"""
+    collection_id: str
+    name: str
+    description: Optional[str] = None
+    total_files: int
+    total_size: int
+    images_count: int
+    videos_count: int
+    documents_count: int
+    audio_count: int
+    other_count: int
+
+class FileStatisticsResponse(BaseModel):
+    """Response model for file statistics"""
+    total_files: int
+    total_size: int
+    by_type: Dict[str, Dict[str, Any]]
+    by_extension: Dict[str, Dict[str, Any]]
+    largest_files: List[Dict[str, Any]]
+
 # Global job storage (in production, use Redis or database)
 jobs: Dict[str, Dict[str, Any]] = {}
 
 # FastAPI App
 app = FastAPI(
     title="OERSync-AI Extractor Service",
-    description="Microservice für MBZ-Datei-Extraktion und Metadaten-Verarbeitung",
+    description="Microservice für MBZ-Datei-Extraktion und Metadaten-Verarbeitung mit erweiterter Medienintegration",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -138,7 +179,7 @@ def update_job_status(job_id: str, status: str, message: str, **kwargs):
         logger.info("Job status updated", job_id=job_id, status=status, message=message)
 
 async def process_mbz_extraction(job_id: str, file_path: Path, original_filename: str):
-    """Background task for MBZ extraction and processing"""
+    """Background task for MBZ extraction and processing with enhanced media integration"""
     logger.info("Starting MBZ extraction", job_id=job_id, filename=original_filename)
     
     start_time = time.time()
@@ -157,18 +198,20 @@ async def process_mbz_extraction(job_id: str, file_path: Path, original_filename
         logger.info("MBZ extraction completed", job_id=job_id, 
                    archive_type=extraction_result.archive_type)
         
-        update_job_status(job_id, "processing", "Parsing XML structures...")
+        update_job_status(job_id, "processing", "Parsing XML structures and media files...")
         
-        # Step 2: Parse XML structures
+        # Step 2: Parse XML structures with enhanced media integration
         try:
             extracted_data = parse_moodle_backup_complete(
                 backup_xml_path=extraction_result.moodle_backup_xml,
                 course_xml_path=extraction_result.course_xml,
                 sections_path=temp_dir / "extracted" / "sections" if (temp_dir / "extracted" / "sections").exists() else None,
-                activities_path=temp_dir / "extracted" / "activities" if (temp_dir / "extracted" / "activities").exists() else None
+                activities_path=temp_dir / "extracted" / "activities" if (temp_dir / "extracted" / "activities").exists() else None,
+                files_xml_path=extraction_result.files_xml  # NEUE FUNKTIONALITÄT
             )
-            logger.info("XML parsing completed", job_id=job_id, 
-                       course_name=extracted_data.course_name)
+            logger.info("XML parsing completed with media integration", job_id=job_id, 
+                       course_name=extracted_data.course_name,
+                       files_count=len(extracted_data.files))
         except Exception as e:
             logger.warning("XML parsing failed, using minimal data", job_id=job_id, error=str(e))
             # Fallback: Aktivitäten trotzdem extrahieren
@@ -188,11 +231,28 @@ async def process_mbz_extraction(job_id: str, file_path: Path, original_filename
                                 activities.append(activity_metadata)
                             except Exception as e2:
                                 logger.warning("Fehler beim Parsen einer Activity im Fallback", file=str(activity_xml), error=str(e2))
+            
+            # Fallback: Versuche files.xml zu parsen
+            files_data = []
+            media_collections = []
+            file_statistics = {}
+            if extraction_result.files_xml and extraction_result.files_xml.exists():
+                try:
+                    files_info = parser.parse_files_xml(extraction_result.files_xml)
+                    files_data = parser.convert_files_to_metadata(files_info)
+                    file_statistics = parser.create_file_statistics(files_data)
+                    logger.info("Files.xml parsed in fallback mode", files_count=len(files_data))
+                except Exception as e3:
+                    logger.warning("Files.xml parsing failed in fallback", error=str(e3))
+            
             extracted_data = create_complete_extracted_data(backup_info, activities=activities)
+            # Füge Medienintegration zum Fallback hinzu
+            extracted_data.files = files_data
+            extracted_data.file_statistics = file_statistics
         
-        update_job_status(job_id, "processing", "Creating metadata mappings...")
+        update_job_status(job_id, "processing", "Creating metadata mappings and media collections...")
         
-        # Step 3: Serialize for JSON response
+        # Step 3: Serialize for JSON response with enhanced media data
         extracted_data_dict = {
             "course_id": extracted_data.course_id,
             "course_name": extracted_data.course_name,
@@ -247,7 +307,54 @@ async def process_mbz_extraction(job_id: str, file_path: Path, original_filename
             
             # Sections und Activities
             "sections": extracted_data.sections,
-            "activities": extracted_data.activities
+            "activities": extracted_data.activities,
+            
+            # ERWEITERTE MEDIENINTEGRATION
+            "files": [
+                {
+                    "file_id": f.file_id,
+                    "original_filename": f.original_filename,
+                    "filepath": f.filepath,
+                    "mimetype": f.mimetype,
+                    "filesize": f.filesize,
+                    "media_type": f.media_type.value if hasattr(f.media_type, 'value') else str(f.media_type),
+                    "file_extension": f.file_extension,
+                    "title": f.title,
+                    "description": f.description,
+                    "author": f.author,
+                    "license": f.license.value if f.license else None,
+                    "is_image": f.is_image,
+                    "is_video": f.is_video,
+                    "is_document": f.is_document,
+                    "is_audio": f.is_audio,
+                    "timecreated": f.timecreated.isoformat() if f.timecreated else None,
+                    "timemodified": f.timemodified.isoformat() if f.timemodified else None,
+                    "used_in_activities": f.used_in_activities,
+                    "used_in_sections": f.used_in_sections
+                }
+                for f in extracted_data.files
+            ],
+            
+            "media_collections": [
+                {
+                    "collection_id": mc.collection_id,
+                    "name": mc.name,
+                    "description": mc.description,
+                    "total_files": mc.total_files,
+                    "total_size": mc.total_size,
+                    "images_count": len(mc.images),
+                    "videos_count": len(mc.videos),
+                    "documents_count": len(mc.documents),
+                    "audio_count": len(mc.audio_files),
+                    "other_count": len(mc.other_files),
+                    "course_id": mc.course_id,
+                    "section_id": mc.section_id,
+                    "activity_id": mc.activity_id
+                }
+                for mc in extracted_data.media_collections
+            ],
+            
+            "file_statistics": extracted_data.file_statistics
         }
         
         processing_time = time.time() - start_time
@@ -256,14 +363,14 @@ async def process_mbz_extraction(job_id: str, file_path: Path, original_filename
         update_job_status(
             job_id, 
             "completed", 
-            "Extraction and metadata mapping completed successfully",
+            f"Extraction and metadata mapping completed successfully. Found {len(extracted_data.files)} media files.",
             completed_at=datetime.now(),
             processing_time_seconds=processing_time,
             extracted_data=extracted_data_dict
         )
         
-        logger.info("MBZ processing completed successfully", 
-                   job_id=job_id, processing_time=processing_time)
+        logger.info("MBZ processing completed successfully with media integration", 
+                   job_id=job_id, processing_time=processing_time, files_count=len(extracted_data.files))
         
     except Exception as e:
         processing_time = time.time() - start_time
@@ -302,7 +409,7 @@ async def extract_mbz(
     file: UploadFile = File(...)
 ):
     """
-    Upload and extract MBZ file
+    Upload and extract MBZ file with enhanced media integration
     
     Creates a background job for processing the MBZ file.
     Returns job ID for status tracking.
@@ -397,7 +504,7 @@ async def get_job_status(job_id: str):
 
 @app.get("/extract/{job_id}", response_model=ExtractionResult)
 async def get_job_result(job_id: str):
-    """Get job result"""
+    """Get job result with enhanced media data"""
     job = get_job_by_id(job_id)
     
     if not job:
@@ -446,14 +553,252 @@ async def delete_job(job_id: str):
     
     return {"message": "Job deleted successfully", "job_id": job_id}
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Global exception handler"""
-    logger.error("Unhandled exception", error=str(exc), path=request.url.path)
-    return JSONResponse(
-        status_code=500,
-        content={"error": "Internal server error", "message": str(exc)}
-    )
+# NEUE MEDIENENDPUNKTE
+
+@app.get("/extract/{job_id}/media", response_model=List[MediaFileResponse])
+async def get_job_media_files(job_id: str):
+    """Get all media files for a completed job"""
+    job = get_job_by_id(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    extracted_data = job["extracted_data"]
+    if not extracted_data or "files" not in extracted_data:
+        return []
+    
+    return [
+        MediaFileResponse(
+            file_id=f["file_id"],
+            original_filename=f["original_filename"],
+            filepath=f["filepath"],
+            mimetype=f["mimetype"],
+            filesize=f["filesize"],
+            media_type=f["media_type"],
+            file_extension=f["file_extension"],
+            is_image=f["is_image"],
+            is_video=f["is_video"],
+            is_document=f["is_document"],
+            is_audio=f["is_audio"],
+            title=f.get("title"),
+            description=f.get("description"),
+            author=f.get("author"),
+            timecreated=datetime.fromisoformat(f["timecreated"]) if f.get("timecreated") else None,
+            timemodified=datetime.fromisoformat(f["timemodified"]) if f.get("timemodified") else None
+        )
+        for f in extracted_data["files"]
+    ]
+
+@app.get("/extract/{job_id}/media/{file_id}", response_model=MediaFileResponse)
+async def get_job_media_file(job_id: str, file_id: str):
+    """Get specific media file information"""
+    job = get_job_by_id(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    extracted_data = job["extracted_data"]
+    if not extracted_data or "files" not in extracted_data:
+        raise HTTPException(status_code=404, detail="No media files found")
+    
+    # Find the specific file
+    for f in extracted_data["files"]:
+        if f["file_id"] == file_id:
+            return MediaFileResponse(
+                file_id=f["file_id"],
+                original_filename=f["original_filename"],
+                filepath=f["filepath"],
+                mimetype=f["mimetype"],
+                filesize=f["filesize"],
+                media_type=f["media_type"],
+                file_extension=f["file_extension"],
+                is_image=f["is_image"],
+                is_video=f["is_video"],
+                is_document=f["is_document"],
+                is_audio=f["is_audio"],
+                title=f.get("title"),
+                description=f.get("description"),
+                author=f.get("author"),
+                timecreated=datetime.fromisoformat(f["timecreated"]) if f.get("timecreated") else None,
+                timemodified=datetime.fromisoformat(f["timemodified"]) if f.get("timemodified") else None
+            )
+    
+    raise HTTPException(status_code=404, detail="Media file not found")
+
+@app.get("/extract/{job_id}/media/{file_id}/download")
+async def download_media_file(job_id: str, file_id: str):
+    """
+    Download a specific media file from the extracted MBZ
+    
+    This endpoint provides direct access to the extracted media files.
+    Note: Files are only available as long as the extraction job exists.
+    """
+    job = get_job_by_id(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    extracted_data = job["extracted_data"]
+    if not extracted_data or "files" not in extracted_data:
+        raise HTTPException(status_code=404, detail="No media files found")
+    
+    # Find the specific file
+    target_file = None
+    for f in extracted_data["files"]:
+        if f["file_id"] == file_id:
+            target_file = f
+            break
+    
+    if not target_file:
+        raise HTTPException(status_code=404, detail="Media file not found")
+    
+    # Construct the file path in the extracted directory
+    # Note: This assumes the extraction directory still exists
+    # In a production environment, you might want to store file paths
+    try:
+        # Try to find the file in the extracted directory
+        # This is a simplified approach - in production, you'd want to store file paths
+        extracted_dir = Path(f"/tmp/mbz_extract_{job_id}_*")
+        possible_dirs = list(extracted_dir.parent.glob(f"mbz_extract_{job_id}_*"))
+        
+        if not possible_dirs:
+            raise HTTPException(status_code=404, detail="Extraction directory not found")
+        
+        extracted_path = possible_dirs[0]
+        files_dir = extracted_path / "extracted" / "files"
+        
+        # Look for the file by contenthash
+        file_path = files_dir / file_id[:2] / file_id[2:4] / file_id
+        
+        if not file_path.exists():
+            # Try alternative path structure
+            file_path = files_dir / file_id
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found on disk")
+        
+        # Return the file
+        return FileResponse(
+            path=file_path,
+            filename=target_file["original_filename"],
+            media_type=target_file["mimetype"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Error serving file {file_id} for job {job_id}", error=str(e))
+        raise HTTPException(status_code=500, detail="Error serving file")
+
+@app.get("/extract/{job_id}/media/type/{media_type}", response_model=List[MediaFileResponse])
+async def get_job_media_by_type(job_id: str, media_type: str):
+    """Get media files filtered by type"""
+    job = get_job_by_id(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    extracted_data = job["extracted_data"]
+    if not extracted_data or "files" not in extracted_data:
+        return []
+    
+    # Validate media type
+    valid_types = [t.value for t in MediaType]
+    if media_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid media type. Valid types: {valid_types}")
+    
+    # Filter files by type
+    filtered_files = [
+        f for f in extracted_data["files"]
+        if f["media_type"] == media_type
+    ]
+    
+    return [
+        MediaFileResponse(
+            file_id=f["file_id"],
+            original_filename=f["original_filename"],
+            filepath=f["filepath"],
+            mimetype=f["mimetype"],
+            filesize=f["filesize"],
+            media_type=f["media_type"],
+            file_extension=f["file_extension"],
+            is_image=f["is_image"],
+            is_video=f["is_video"],
+            is_document=f["is_document"],
+            is_audio=f["is_audio"],
+            title=f.get("title"),
+            description=f.get("description"),
+            author=f.get("author"),
+            timecreated=datetime.fromisoformat(f["timecreated"]) if f.get("timecreated") else None,
+            timemodified=datetime.fromisoformat(f["timemodified"]) if f.get("timemodified") else None
+        )
+        for f in filtered_files
+    ]
+
+@app.get("/extract/{job_id}/media/collections", response_model=List[MediaCollectionResponse])
+async def get_job_media_collections(job_id: str):
+    """Get media collections for a completed job"""
+    job = get_job_by_id(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    extracted_data = job["extracted_data"]
+    if not extracted_data or "media_collections" not in extracted_data:
+        return []
+    
+    return [
+        MediaCollectionResponse(
+            collection_id=mc["collection_id"],
+            name=mc["name"],
+            description=mc.get("description"),
+            total_files=mc["total_files"],
+            total_size=mc["total_size"],
+            images_count=mc["images_count"],
+            videos_count=mc["videos_count"],
+            documents_count=mc["documents_count"],
+            audio_count=mc["audio_count"],
+            other_count=mc["other_count"]
+        )
+        for mc in extracted_data["media_collections"]
+    ]
+
+@app.get("/extract/{job_id}/media/statistics", response_model=FileStatisticsResponse)
+async def get_job_media_statistics(job_id: str):
+    """Get media file statistics for a completed job"""
+    job = get_job_by_id(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Job not completed yet")
+    
+    extracted_data = job["extracted_data"]
+    if not extracted_data or "file_statistics" not in extracted_data:
+        return FileStatisticsResponse(
+            total_files=0,
+            total_size=0,
+            by_type={},
+            by_extension={},
+            largest_files=[]
+        )
+    
+    stats = extracted_data["file_statistics"]
+    return FileStatisticsResponse(**stats)
 
 @app.post("/start-moodle-instance/{job_id}")
 async def start_moodle_instance(job_id: str):
@@ -587,7 +932,8 @@ async def extract_activities(file: UploadFile = File(...)):
                 backup_xml_path=extraction_result.moodle_backup_xml,
                 course_xml_path=extraction_result.course_xml,
                 sections_path=Path(extraction_result.temp_dir, "extracted", "sections"),
-                activities_path=Path(extraction_result.temp_dir, "extracted", "activities")
+                activities_path=Path(extraction_result.temp_dir, "extracted", "activities"),
+                files_xml_path=extraction_result.files_xml  # NEUE FUNKTIONALITÄT
             )
         except Exception as e:
             # Fallback: Aktivitäten trotzdem extrahieren
@@ -624,8 +970,17 @@ async def extract_activities(file: UploadFile = File(...)):
         except Exception:
             pass
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler"""
+    logger.error("Unhandled exception", error=str(exc), path=request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "message": str(exc)}
+    )
+
 if __name__ == "__main__":
-    logger.info("Starting OERSync-AI Extractor Service")
+    logger.info("Starting OERSync-AI Extractor Service with enhanced media integration")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

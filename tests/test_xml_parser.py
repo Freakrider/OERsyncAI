@@ -265,8 +265,7 @@ def test_dublin_core_creation():
         shortname="test-101",
         category_id=5,
         summary="Ein Test-Kurs für die Validierung",
-        format="topics",
-        language="de"
+        format="topics"
     )
     
     try:

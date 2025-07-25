@@ -16,7 +16,8 @@ from dataclasses import dataclass
 
 from shared.models.dublin_core import (
     DublinCoreMetadata, EducationalMetadata, MoodleActivityMetadata,
-    MoodleExtractedData, LearningResourceType, EducationalLevel, Language, DCMIType
+    MoodleExtractedData, LearningResourceType, EducationalLevel, Language, DCMIType,
+    FileMetadata, MediaCollection, MediaType, classify_media_type, create_media_collection_from_files
 )
 
 logger = structlog.get_logger()
@@ -29,54 +30,57 @@ class XMLParsingError(Exception):
 
 @dataclass
 class MoodleBackupInfo:
-    """Informationen aus moodle_backup.xml"""
-    moodle_version: str
-    backup_version: str
-    backup_type: str
-    backup_date: datetime
+    """Basis-Informationen aus moodle_backup.xml"""
     original_course_id: int
     original_course_fullname: str
     original_course_shortname: str
     original_course_format: str
-    anonymized: bool = False
-    backup_unique_code: Optional[str] = None
+    moodle_version: Optional[str] = None
+    backup_version: Optional[str] = None
+    backup_date: Optional[datetime] = None
+    backup_type: Optional[str] = None
 
 
 @dataclass
 class MoodleCourseInfo:
-    """Informationen aus course/course.xml"""
+    """Kurs-Informationen aus course.xml"""
     course_id: int
     fullname: str
     shortname: str
     category_id: int
     summary: Optional[str] = None
     format: str = "topics"
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
-    language: str = "de"
-    visible: bool = True
-    guest_access: bool = False
-    enrollment_keys: List[str] = None
-    
-    def __post_init__(self):
-        if self.enrollment_keys is None:
-            self.enrollment_keys = []
 
 
 @dataclass
 class MoodleSectionInfo:
-    """Informationen zu Kurs-Abschnitten"""
+    """Abschnitt-Informationen aus section.xml"""
     section_id: int
     section_number: int
-    name: Optional[str] = None
+    name: str
     summary: Optional[str] = None
     visible: bool = True
-    availability: Optional[Dict[str, Any]] = None
     activities: List[int] = None
     
     def __post_init__(self):
         if self.activities is None:
             self.activities = []
+
+
+@dataclass
+class MoodleFileInfo:
+    """Datei-Informationen aus files.xml"""
+    file_id: str  # contenthash
+    original_filename: str
+    filepath: str
+    mimetype: str
+    filesize: int
+    timecreated: Optional[datetime] = None
+    timemodified: Optional[datetime] = None
+    userid: Optional[int] = None
+    source: Optional[str] = None
+    author: Optional[str] = None
+    license: Optional[str] = None
 
 
 class XMLParser:
@@ -88,6 +92,7 @@ class XMLParser:
     - Sichere XML-Validierung
     - Strukturierte Metadaten-Extraktion
     - Dublin Core Mapping
+    - Erweiterte Medienintegration
     """
     
     # XML Security Settings - ElementTree unterstützt weniger Optionen
@@ -163,40 +168,100 @@ class XMLParser:
                 
         except Exception as e:
             raise XMLParsingError(f"Fehler beim Lesen der XML-Datei {xml_path}: {e}")
-    
+
     def _clean_xml_content(self, content: str) -> str:
-        """Bereinigt XML-Inhalt von häufigen Beschädigungen"""
-        # Entferne ungültige Zeichen am Ende
-        content = content.rstrip()
+        """Bereinigt XML-Inhalt von häufigen Problemen"""
+        # Entferne NULL-Bytes
+        content = content.replace('\x00', '')
         
-        # Entferne % Zeichen am Ende (häufige Beschädigung in MBZ-Exports)
-        if content.endswith('%'):
-            content = content[:-1]
+        # Entferne ungültige XML-Zeichen
+        content = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', content)
         
-        # Stelle sicher, dass XML korrekt endet
-        if not content.endswith('>'):
-            # Suche nach dem letzten schließenden Tag
-            last_closing = content.rfind('>')
-            if last_closing != -1:
-                content = content[:last_closing + 1]
-        
-        return content
-    
+        # Entferne BOM falls vorhanden
+        if content.startswith('\ufeff'):
+            content = content[1:]
+            
+        return content.strip()
+
     def _clean_xml_content_aggressive(self, content: str) -> str:
-        """Aggressivere XML-Bereinigung für stark beschädigte Dateien"""
-        # Entferne alle ungültigen Zeichen am Ende
-        content = content.rstrip()
+        """Aggressivere XML-Bereinigung für problematische Dateien"""
+        # Entferne alle nicht-printable Zeichen außer Tabs und Newlines
+        content = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]', '', content)
         
-        # Entferne alles nach dem letzten gültigen XML-Tag
-        lines = content.split('\n')
-        cleaned_lines = []
+        # Entferne doppelte Whitespaces
+        content = re.sub(r'\s+', ' ', content)
         
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith('%') and not line.endswith('%'):
-                cleaned_lines.append(line)
+        return content.strip()
+
+    def _safe_int_parse(self, value: Optional[str], default: int = 0) -> int:
+        """Sichere Integer-Parsing mit Fallback für ungültige Werte"""
+        if value is None:
+            return default
+            
+        # Bereinige den Wert
+        cleaned_value = value.strip()
         
-        return '\n'.join(cleaned_lines)
+        # Prüfe auf spezielle NULL-Werte
+        if cleaned_value in ['$@NULL@$', 'NULL', 'null', '', 'None', 'none']:
+            return default
+            
+        try:
+            return int(cleaned_value)
+        except (ValueError, TypeError):
+            self.logger.warning("Konnte Wert nicht als Integer parsen", value=cleaned_value)
+            return default
+
+    def _safe_float_parse(self, value: Optional[str], default: float = 0.0) -> float:
+        """Sichere Float-Parsing mit Fallback für ungültige Werte"""
+        if value is None:
+            return default
+            
+        # Bereinige den Wert
+        cleaned_value = value.strip()
+        
+        # Prüfe auf spezielle NULL-Werte
+        if cleaned_value in ['$@NULL@$', 'NULL', 'null', '', 'None', 'none']:
+            return default
+            
+        try:
+            return float(cleaned_value)
+        except (ValueError, TypeError):
+            self.logger.warning("Konnte Wert nicht als Float parsen", value=cleaned_value)
+            return default
+
+    def _get_text(self, element: Optional[etree.Element]) -> Optional[str]:
+        """Sichere Text-Extraktion aus XML-Elementen"""
+        if element is None:
+            return None
+        
+        text = element.text
+        if text is None:
+            return None
+            
+        return text.strip()
+
+    def _parse_timestamp(self, element: Optional[etree.Element]) -> Optional[datetime]:
+        """Parst Timestamp aus XML-Element"""
+        if element is None:
+            return None
+            
+        timestamp_text = self._get_text(element)
+        if not timestamp_text:
+            return None
+            
+        try:
+            # Versuche verschiedene Timestamp-Formate
+            timestamp = self._safe_int_parse(timestamp_text)
+            if timestamp == 0:
+                return None
+            return datetime.fromtimestamp(timestamp)
+        except (ValueError, OSError):
+            try:
+                # Versuche ISO-Format
+                return datetime.fromisoformat(timestamp_text.replace('Z', '+00:00'))
+            except ValueError:
+                self.logger.warning("Konnte Timestamp nicht parsen", timestamp=timestamp_text)
+                return None
 
     def parse_moodle_backup_xml(self, backup_xml_path: Path) -> MoodleBackupInfo:
         """
@@ -239,51 +304,32 @@ class XMLParser:
             # Original Course Information - direkt unter information
             # Versuche zuerst original_course_info (alte Struktur)
             original_course_info = information.find('original_course_info')
-            
             if original_course_info is not None:
-                # Alte Struktur mit original_course_info Element
-                course_id = int(self._get_text(original_course_info.find('courseid')) or '0')
-                course_fullname = self._get_text(original_course_info.find('fullname')) or "Unknown Course"
+                # Alte Struktur
+                course_id = self._safe_int_parse(self._get_text(original_course_info.find('id')))
+                course_fullname = self._get_text(original_course_info.find('fullname')) or "Unbekannter Kurs"
                 course_shortname = self._get_text(original_course_info.find('shortname')) or "unknown"
                 course_format = self._get_text(original_course_info.find('format')) or "topics"
             else:
-                # Neue Struktur - Kurs-Informationen direkt unter information
-                course_id = int(self._get_text(information.find('original_course_id')) or '0')
-                course_fullname = self._get_text(information.find('original_course_fullname')) or "Unknown Course"
+                # Neue Struktur - direkt unter information
+                course_id = self._safe_int_parse(self._get_text(information.find('original_course_id')))
+                course_fullname = self._get_text(information.find('original_course_fullname')) or "Unbekannter Kurs"
                 course_shortname = self._get_text(information.find('original_course_shortname')) or "unknown"
                 course_format = self._get_text(information.find('original_course_format')) or "topics"
             
-            # Anonymized Check
-            anonymized_elem = information.find('anonymized')
-            anonymized = anonymized_elem is not None and self._get_text(anonymized_elem) == '1'
-            
-            # Backup Unique Code
-            backup_unique_code = self._get_text(information.find('backup_unique_code'))
-            
-            backup_info = MoodleBackupInfo(
-                moodle_version=moodle_version or "unknown",
-                backup_version=backup_version or "unknown", 
-                backup_type=backup_type or "course",
-                backup_date=backup_date or datetime.now(),
+            return MoodleBackupInfo(
                 original_course_id=course_id,
                 original_course_fullname=course_fullname,
                 original_course_shortname=course_shortname,
                 original_course_format=course_format,
-                anonymized=anonymized,
-                backup_unique_code=backup_unique_code
-            )
-            
-            self.logger.info(
-                "moodle_backup.xml parsed successfully",
-                course_name=course_fullname,
                 moodle_version=moodle_version,
-                backup_date=backup_date
+                backup_version=backup_version,
+                backup_date=backup_date,
+                backup_type=backup_type
             )
-            
-            return backup_info
             
         except Exception as e:
-            raise XMLParsingError(f"Fehler beim Parsen der moodle_backup.xml: {e}")
+            raise XMLParsingError(f"Fehler beim Parsen von moodle_backup.xml: {e}")
 
     def parse_course_xml(self, course_xml_path: Path) -> MoodleCourseInfo:
         """
@@ -293,7 +339,7 @@ class XMLParser:
             course_xml_path: Pfad zu course/course.xml
             
         Returns:
-            MoodleCourseInfo mit extrahierten Kurs-Daten
+            MoodleCourseInfo mit extrahierten Daten
             
         Raises:
             XMLParsingError: Bei Parsing-Fehlern
@@ -303,73 +349,245 @@ class XMLParser:
         root = self.parse_xml_file(course_xml_path)
         
         try:
-            # Course Element ist bereits der Root
-            course = root
-            if course.tag != 'course':
-                raise XMLParsingError(f"Erwartetes 'course' Element, gefunden: '{course.tag}'")
+            # Suche nach course Element
+            course = root.find('.//course')
+            if course is None:
+                raise XMLParsingError("Kein 'course' Element in course.xml gefunden")
             
-            # Basic course information - Die ID ist ein Attribut, nicht ein Sub-Element
-            course_id = int(course.get('id') or '0')
-            fullname = self._get_text(course.find('fullname')) or "Unknown Course"
+            # Course ID
+            course_id = self._safe_int_parse(course.get('id'))
+            
+            # Course name
+            fullname = self._get_text(course.find('fullname')) or "Unbekannter Kurs"
             shortname = self._get_text(course.find('shortname')) or "unknown"
             
-            # Category ID ist auch ein Attribut im category Element
-            category_elem = course.find('category')
-            category_id = int(category_elem.get('id') or '0') if category_elem is not None else 0
+            # Category ID
+            category_id = self._safe_int_parse(self._get_text(course.find('categoryid')))
             
+            # Summary
             summary = self._get_text(course.find('summary'))
-            course_format = self._get_text(course.find('format')) or "topics"
             
-            # Dates
-            start_date = self._parse_timestamp(course.find('startdate'))
-            end_date = self._parse_timestamp(course.find('enddate'))
+            # Format
+            format_type = self._get_text(course.find('format')) or "topics"
             
-            # Language
-            language = self._get_text(course.find('lang')) or "de"
-            
-            # Visibility
-            visible_elem = course.find('visible')
-            visible = visible_elem is None or self._get_text(visible_elem) != '0'
-            
-            # Guest access
-            guest_elem = course.find('guest')
-            guest_access = guest_elem is not None and self._get_text(guest_elem) == '1'
-            
-            # Enrollment keys (if any)
-            enrollment_keys = []
-            enrol_elem = course.find('enrolments')
-            if enrol_elem is not None:
-                for enrol in enrol_elem.findall('.//enrol'):
-                    password = self._get_text(enrol.find('password'))
-                    if password:
-                        enrollment_keys.append(password)
-            
-            course_info = MoodleCourseInfo(
+            return MoodleCourseInfo(
                 course_id=course_id,
                 fullname=fullname,
                 shortname=shortname,
                 category_id=category_id,
                 summary=summary,
-                format=course_format,
-                start_date=start_date,
-                end_date=end_date,
-                language=language,
-                visible=visible,
-                guest_access=guest_access,
-                enrollment_keys=enrollment_keys
+                format=format_type
             )
-            
-            self.logger.info(
-                "course.xml parsed successfully",
-                course_name=fullname,
-                format=course_format,
-                language=language
-            )
-            
-            return course_info
             
         except Exception as e:
-            raise XMLParsingError(f"Fehler beim Parsen der course.xml: {e}")
+            raise XMLParsingError(f"Fehler beim Parsen von course.xml: {e}")
+
+    def parse_files_xml(self, files_xml_path: Path) -> List[MoodleFileInfo]:
+        """
+        Parst files.xml für Datei-Metadaten
+        
+        Args:
+            files_xml_path: Pfad zu files.xml
+            
+        Returns:
+            Liste von MoodleFileInfo Objekten
+            
+        Raises:
+            XMLParsingError: Bei Parsing-Fehlern
+        """
+        self.logger.info("Parsing files.xml", file=str(files_xml_path))
+        
+        root = self.parse_xml_file(files_xml_path)
+        
+        try:
+            files = []
+            
+            # Suche nach allen file Elementen
+            for file_elem in root.findall('.//file'):
+                try:
+                    # Basis-Informationen
+                    file_id = self._get_text(file_elem.find('contenthash'))
+                    if not file_id:
+                        continue  # Überspringe Dateien ohne contenthash
+                    
+                    original_filename = self._get_text(file_elem.find('filename')) or "unknown"
+                    filepath = self._get_text(file_elem.find('filepath')) or "/"
+                    mimetype = self._get_text(file_elem.find('mimetype')) or "application/octet-stream"
+                    
+                    # Dateigröße
+                    filesize_text = self._get_text(file_elem.find('filesize'))
+                    filesize = self._safe_int_parse(filesize_text)
+                    
+                    # Timestamps
+                    timecreated = self._parse_timestamp(file_elem.find('timecreated'))
+                    timemodified = self._parse_timestamp(file_elem.find('timemodified'))
+                    
+                    # Zusätzliche Metadaten
+                    userid_text = self._get_text(file_elem.find('userid'))
+                    userid = self._safe_int_parse(userid_text) if userid_text else None
+                    
+                    source = self._get_text(file_elem.find('source'))
+                    author = self._get_text(file_elem.find('author'))
+                    license = self._get_text(file_elem.find('license'))
+                    
+                    file_info = MoodleFileInfo(
+                        file_id=file_id,
+                        original_filename=original_filename,
+                        filepath=filepath,
+                        mimetype=mimetype,
+                        filesize=filesize,
+                        timecreated=timecreated,
+                        timemodified=timemodified,
+                        userid=userid,
+                        source=source,
+                        author=author,
+                        license=license
+                    )
+                    
+                    files.append(file_info)
+                    
+                except Exception as e:
+                    self.logger.warning("Fehler beim Parsen einer Datei", error=str(e))
+                    continue
+            
+            self.logger.info(f"Successfully parsed {len(files)} files from files.xml")
+            return files
+            
+        except Exception as e:
+            raise XMLParsingError(f"Fehler beim Parsen von files.xml: {e}")
+
+    def convert_files_to_metadata(self, files_info: List[MoodleFileInfo]) -> List[FileMetadata]:
+        """
+        Konvertiert MoodleFileInfo zu FileMetadata mit erweiterten Metadaten
+        
+        Args:
+            files_info: Liste von MoodleFileInfo Objekten
+            
+        Returns:
+            Liste von FileMetadata Objekten
+        """
+        file_metadata_list = []
+        
+        for file_info in files_info:
+            try:
+                # Bestimme Dateiendung
+                file_extension = Path(file_info.original_filename).suffix.lower()
+                
+                # Klassifiziere Medientyp
+                media_type = classify_media_type(file_info.mimetype, file_info.original_filename)
+                
+                # Stelle sicher, dass media_type ein MediaType Enum ist
+                if not isinstance(media_type, MediaType):
+                    try:
+                        media_type = MediaType(str(media_type))
+                    except ValueError:
+                        media_type = MediaType.OTHER
+                
+                # Bestimme spezifische Eigenschaften
+                is_image = bool(media_type == MediaType.IMAGE)
+                is_video = bool(media_type == MediaType.VIDEO)
+                is_document = bool(media_type in [MediaType.DOCUMENT, MediaType.PRESENTATION, MediaType.SPREADSHEET])
+                is_audio = bool(media_type == MediaType.AUDIO)
+                
+                # Erstelle FileMetadata
+                file_metadata = FileMetadata(
+                    file_id=file_info.file_id,
+                    original_filename=file_info.original_filename,
+                    filepath=file_info.filepath,
+                    mimetype=file_info.mimetype,
+                    filesize=file_info.filesize,
+                    timecreated=file_info.timecreated,
+                    timemodified=file_info.timemodified,
+                    media_type=media_type,
+                    file_extension=file_extension,
+                    title=file_info.original_filename,
+                    description=None,  # Könnte später aus anderen Quellen gefüllt werden
+                    author=file_info.author,
+                    license=None,  # Könnte später aus file_info.license gemappt werden
+                    is_image=is_image,
+                    is_video=is_video,
+                    is_document=is_document,
+                    is_audio=is_audio
+                )
+                
+                file_metadata_list.append(file_metadata)
+                
+            except Exception as e:
+                self.logger.warning("Fehler beim Konvertieren einer Datei", 
+                                  file_id=file_info.file_id, error=str(e))
+                continue
+        
+        return file_metadata_list
+
+    def create_file_statistics(self, files: List[FileMetadata]) -> Dict[str, Any]:
+        """
+        Erstellt Statistiken über die Dateien
+        
+        Args:
+            files: Liste von FileMetadata Objekten
+            
+        Returns:
+            Dictionary mit Statistiken
+        """
+        if not files:
+            return {
+                "total_files": 0,
+                "total_size": 0,
+                "by_type": {},
+                "by_extension": {},
+                "largest_files": []
+            }
+        
+        # Basis-Statistiken
+        total_files = len(files)
+        total_size = sum(f.filesize for f in files)
+        
+        # Nach Typ gruppieren
+        by_type = {}
+        for file_meta in files:
+            # Stelle sicher, dass media_type ein Enum ist
+            if hasattr(file_meta.media_type, 'value'):
+                media_type = file_meta.media_type.value
+            else:
+                # Fallback: versuche String zu MediaType zu konvertieren
+                try:
+                    media_type = MediaType(str(file_meta.media_type)).value
+                except (ValueError, AttributeError):
+                    media_type = "other"
+            
+            if media_type not in by_type:
+                by_type[media_type] = {"count": 0, "total_size": 0}
+            by_type[media_type]["count"] += 1
+            by_type[media_type]["total_size"] += file_meta.filesize
+        
+        # Nach Dateiendung gruppieren
+        by_extension = {}
+        for file_meta in files:
+            ext = file_meta.file_extension
+            if ext not in by_extension:
+                by_extension[ext] = {"count": 0, "total_size": 0}
+            by_extension[ext]["count"] += 1
+            by_extension[ext]["total_size"] += file_meta.filesize
+        
+        # Größte Dateien (Top 10)
+        largest_files = sorted(files, key=lambda x: x.filesize, reverse=True)[:10]
+        largest_files_data = [
+            {
+                "file_id": f.file_id,
+                "filename": f.original_filename,
+                "size": f.filesize,
+                "media_type": f.media_type.value if hasattr(f.media_type, 'value') else str(f.media_type)
+            }
+            for f in largest_files
+        ]
+        
+        return {
+            "total_files": total_files,
+            "total_size": total_size,
+            "by_type": by_type,
+            "by_extension": by_extension,
+            "largest_files": largest_files_data
+        }
 
     def parse_sections_xml(self, sections_xml_path: Path) -> List[MoodleSectionInfo]:
         """
@@ -418,11 +636,11 @@ class XMLParser:
                     raise XMLParsingError("Kein 'section' Element gefunden")
             
             # Section ID
-            section_id = int(section_elem.get('id', '0'))
+            section_id = self._safe_int_parse(section_elem.get('id'))
             
             # Section number
             number_elem = section_elem.find('number')
-            section_number = int(self._get_text(number_elem) or '0')
+            section_number = self._safe_int_parse(self._get_text(number_elem))
             
             # Section name
             name = self._get_text(section_elem.find('name'))
@@ -440,7 +658,7 @@ class XMLParser:
             activities = []
             if sequence_text:
                 try:
-                    activities = [int(x.strip()) for x in sequence_text.split(',') if x.strip()]
+                    activities = [self._safe_int_parse(x.strip()) for x in sequence_text.split(',') if x.strip()]
                 except ValueError:
                     pass
             
@@ -480,10 +698,10 @@ class XMLParser:
             
             # Extrahiere Activity-ID aus Ordnernamen (z.B. "book_33" -> 33)
             try:
-                activity_id = int(activity_folder.split('_')[1])  # z.B. 33
+                activity_id = self._safe_int_parse(activity_folder.split('_')[1])  # z.B. 33
             except (IndexError, ValueError):
                 # Fallback: versuche aus XML zu lesen
-                activity_id = int(self._get_text(root.find('.//activity')) or '0')
+                activity_id = self._safe_int_parse(self._get_text(root.find('.//activity')))
             
             # Suche nach activity Element oder verwende Root
             activity = root.find('.//activity')
@@ -492,8 +710,7 @@ class XMLParser:
                 activity = root
             
             # Basic activity information
-            module_name = self._get_text(activity.find('modulename')) or activity_type
-            section_number = int(self._get_text(activity.find('sectionnumber')) or '0')
+            section_number = self._safe_int_parse(self._get_text(activity.find('sectionnumber')))
             
             # Module specific data - suche nach verschiedenen möglichen Strukturen
             module_elem = activity.find(f'.//{activity_type}')
@@ -501,15 +718,29 @@ class XMLParser:
                 module_elem = activity
                 
             name = self._get_text(module_elem.find('name')) or f"{activity_type.title()} {activity_id}"
+            
+            # Module name - verwende verschiedene Quellen
+            module_name = self._get_text(activity.find('modulename')) or name or f"{activity_type.title()} {activity_id}"
             intro = self._get_text(module_elem.find('intro'))
             
             # Visibility
             visible_elem = module_elem.find('visible')
             visible = visible_elem is None or self._get_text(visible_elem) != '0'
             
-            # Completion
+            # Completion tracking
             completion_elem = module_elem.find('completion')
-            completion_enabled = completion_elem is not None and self._get_text(completion_elem) != '0'
+            completion_enabled = completion_elem is not None and self._get_text(completion_elem) == '1'
+            
+            # Grade item
+            grade_item = None
+            grade_elem = module_elem.find('grade_item')
+            if grade_elem is not None:
+                grade_item = {
+                    'id': self._safe_int_parse(self._get_text(grade_elem.find('id'))),
+                    'grademax': self._safe_float_parse(self._get_text(grade_elem.find('grademax'))),
+                    'grademin': self._safe_float_parse(self._get_text(grade_elem.find('grademin'))),
+                    'gradetype': self._get_text(grade_elem.find('gradetype'))
+                }
             
             # Timestamps
             time_created = self._parse_timestamp(module_elem.find('timecreated'))
@@ -521,6 +752,10 @@ class XMLParser:
                 LearningResourceType.ACTIVITY
             )
             
+            # Stelle sicher, dass es ein LearningResourceType Enum ist
+            if isinstance(learning_resource_type, str):
+                learning_resource_type = LearningResourceType.ACTIVITY
+            
             # Activity-spezifische Konfiguration sammeln
             activity_config = {}
             
@@ -531,18 +766,30 @@ class XMLParser:
                 activity_config.update(self._extract_assignment_config(module_elem))
             elif activity_type.lower() == 'forum':
                 activity_config.update(self._extract_forum_config(module_elem))
+            elif activity_type.lower() == 'page':
+                activity_config.update(self._extract_page_config(module_elem))
+            elif activity_type.lower() == 'book':
+                activity_config.update(self._extract_book_config(module_elem))
+            elif activity_type.lower() == 'resource':
+                activity_config.update(self._extract_resource_config(module_elem))
+            elif activity_type.lower() == 'url':
+                activity_config.update(self._extract_url_config(module_elem))
             
-            return MoodleActivityMetadata(
+            # Erstelle MoodleActivityMetadata
+            activity_metadata = MoodleActivityMetadata(
                 activity_id=activity_id,
                 activity_type=learning_resource_type,
-                module_name=name,
+                module_name=module_name,
                 section_number=section_number,
                 visible=visible,
                 completion_enabled=completion_enabled,
+                grade_item=grade_item,
                 time_created=time_created,
                 time_modified=time_modified,
-                activity_config=activity_config if activity_config else None
+                activity_config=activity_config
             )
+            
+            return activity_metadata
             
         except Exception as e:
             raise XMLParsingError(f"Fehler beim Parsen der Activity: {e}")
@@ -552,17 +799,21 @@ class XMLParser:
         config = {}
         
         # Quiz settings
-        time_limit = self._get_text(module_elem.find('timelimit'))
-        if time_limit:
-            config['time_limit_seconds'] = int(time_limit)
+        timeopen = self._get_text(module_elem.find('timeopen'))
+        if timeopen:
+            config['timeopen'] = self._safe_int_parse(timeopen)
+            
+        timeclose = self._get_text(module_elem.find('timeclose'))
+        if timeclose:
+            config['timeclose'] = self._safe_int_parse(timeclose)
+            
+        timelimit = self._get_text(module_elem.find('timelimit'))
+        if timelimit:
+            config['timelimit'] = self._safe_int_parse(timelimit)
             
         attempts = self._get_text(module_elem.find('attempts'))
         if attempts:
-            config['max_attempts'] = int(attempts)
-            
-        grade_method = self._get_text(module_elem.find('grademethod'))
-        if grade_method:
-            config['grade_method'] = grade_method
+            config['attempts'] = self._safe_int_parse(attempts)
             
         return config
 
@@ -571,17 +822,17 @@ class XMLParser:
         config = {}
         
         # Assignment settings
-        due_date = self._parse_timestamp(module_elem.find('duedate'))
-        if due_date:
-            config['due_date'] = due_date.isoformat()
+        assignmenttype = self._get_text(module_elem.find('assignmenttype'))
+        if assignmenttype:
+            config['assignmenttype'] = assignmenttype
             
-        allow_submissions_from = self._parse_timestamp(module_elem.find('allowsubmissionsfromdate'))
-        if allow_submissions_from:
-            config['allow_submissions_from'] = allow_submissions_from.isoformat()
+        resubmit = self._get_text(module_elem.find('resubmit'))
+        if resubmit:
+            config['resubmit'] = self._safe_int_parse(resubmit)
             
-        max_attempts = self._get_text(module_elem.find('maxattempts'))
-        if max_attempts:
-            config['max_attempts'] = int(max_attempts)
+        maxattempts = self._get_text(module_elem.find('maxattempts'))
+        if maxattempts:
+            config['maxattempts'] = self._safe_int_parse(maxattempts)
             
         return config
 
@@ -589,69 +840,121 @@ class XMLParser:
         """Extrahiert Forum-spezifische Konfiguration"""
         config = {}
         
-        # Forum type
-        forum_type = self._get_text(module_elem.find('type'))
-        if forum_type:
-            config['forum_type'] = forum_type
+        # Forum settings
+        forumtype = self._get_text(module_elem.find('forumtype'))
+        if forumtype:
+            config['forumtype'] = forumtype
             
-        # Max attachments
-        max_attachments = self._get_text(module_elem.find('maxattachments'))
-        if max_attachments:
-            config['max_attachments'] = int(max_attachments)
+        maxattachments = self._get_text(module_elem.find('maxattachments'))
+        if maxattachments:
+            config['maxattachments'] = self._safe_int_parse(maxattachments)
+            
+        return config
+
+    def _extract_page_config(self, module_elem: etree.Element) -> Dict[str, Any]:
+        """Extrahiert Page-spezifische Konfiguration"""
+        config = {}
+        
+        # Page content
+        content = self._get_text(module_elem.find('content'))
+        if content:
+            config['content'] = content
+            
+        contentformat = self._get_text(module_elem.find('contentformat'))
+        if contentformat:
+            config['contentformat'] = self._safe_int_parse(contentformat)
+            
+        return config
+
+    def _extract_book_config(self, module_elem: etree.Element) -> Dict[str, Any]:
+        """Extrahiert Book-spezifische Konfiguration"""
+        config = {}
+        
+        # Book settings
+        numbering = self._get_text(module_elem.find('numbering'))
+        if numbering:
+            config['numbering'] = self._safe_int_parse(numbering)
+            
+        navstyle = self._get_text(module_elem.find('navstyle'))
+        if navstyle:
+            config['navstyle'] = self._safe_int_parse(navstyle)
+            
+        customtitles = self._get_text(module_elem.find('customtitles'))
+        if customtitles:
+            config['customtitles'] = self._safe_int_parse(customtitles)
+            
+        # Chapters
+        chapters = []
+        for chapter_elem in module_elem.findall('.//chapter'):
+            chapter = {
+                'id': self._safe_int_parse(self._get_text(chapter_elem.find('id'))),
+                'title': self._get_text(chapter_elem.find('title')),
+                'content': self._get_text(chapter_elem.find('content')),
+                'pagenum': self._safe_int_parse(self._get_text(chapter_elem.find('pagenum'))),
+                'subchapter': self._safe_int_parse(self._get_text(chapter_elem.find('subchapter')))
+            }
+            chapters.append(chapter)
+            
+        if chapters:
+            config['chapters'] = chapters
+            
+        return config
+
+    def _extract_resource_config(self, module_elem: etree.Element) -> Dict[str, Any]:
+        """Extrahiert Resource-spezifische Konfiguration"""
+        config = {}
+        
+        # Resource settings
+        reference = self._get_text(module_elem.find('reference'))
+        if reference:
+            config['reference'] = reference
+            
+        filterfiles = self._get_text(module_elem.find('filterfiles'))
+        if filterfiles:
+            config['filterfiles'] = self._safe_int_parse(filterfiles)
+            
+        return config
+
+    def _extract_url_config(self, module_elem: etree.Element) -> Dict[str, Any]:
+        """Extrahiert URL-spezifische Konfiguration"""
+        config = {}
+        
+        # URL settings
+        externalurl = self._get_text(module_elem.find('externalurl'))
+        if externalurl:
+            config['externalurl'] = externalurl
+            
+        display = self._get_text(module_elem.find('display'))
+        if display:
+            config['display'] = self._safe_int_parse(display)
             
         return config
 
     def create_dublin_core_from_course(self, course_info: MoodleCourseInfo, backup_info: MoodleBackupInfo) -> DublinCoreMetadata:
         """
-        Erstellt Dublin Core Metadaten aus Moodle Kurs-Informationen
+        Erstellt Dublin Core Metadaten aus Kurs-Informationen
         
         Args:
-            course_info: Kurs-Informationen aus course.xml
-            backup_info: Backup-Informationen aus moodle_backup.xml
+            course_info: MoodleCourseInfo Objekt
+            backup_info: MoodleBackupInfo Objekt
             
         Returns:
             DublinCoreMetadata Objekt
         """
-        # Language mapping
-        language_map = {
-            'de': Language.DE,
-            'en': Language.EN,
-            'fr': Language.FR,
-            'es': Language.ES,
-            'it': Language.IT,
-            'nl': Language.NL
-        }
-        
-        language = language_map.get(course_info.language, Language.DE)
+        # Verwende course_info falls verfügbar, sonst backup_info
+        title = course_info.fullname if course_info else backup_info.original_course_fullname
+        description = course_info.summary if course_info else None
+        creator = []  # Könnte später aus anderen Quellen gefüllt werden
         
         return DublinCoreMetadata(
-            title=course_info.fullname,
-            description=course_info.summary,
-            creator=[],  # Wird später durch LLM-Verarbeitung gefüllt
-            type=DCMIType.INTERACTIVE_RESOURCE,
-            language=language,
+            title=title,
+            description=description,
+            creator=creator,
+            type=DCMIType.TEXT,
+            language=Language.DE,
             date=backup_info.backup_date,
-            identifier=f"moodle-course-{course_info.course_id}",
-            format="Moodle Course Backup",
-            source=f"Moodle {backup_info.moodle_version}"
+            format="Moodle Course Backup"
         )
-
-    def _get_text(self, element) -> Optional[str]:
-        """Sicher Text aus XML Element extrahieren"""
-        if element is not None and element.text:
-            return element.text.strip()
-        return None
-
-    def _parse_timestamp(self, element) -> Optional[datetime]:
-        """Parst einen Unix-Timestamp aus XML Element"""
-        if element is not None and element.text:
-            try:
-                timestamp = int(element.text)
-                if timestamp > 0:
-                    return datetime.fromtimestamp(timestamp)
-            except (ValueError, OSError):
-                self.logger.warning("Ungültiger Timestamp", value=element.text)
-        return None
 
 
 # Convenience Functions
@@ -660,16 +963,18 @@ def parse_moodle_backup_complete(
     backup_xml_path: Path,
     course_xml_path: Optional[Path] = None,
     sections_path: Optional[Path] = None,
-    activities_path: Optional[Path] = None
+    activities_path: Optional[Path] = None,
+    files_xml_path: Optional[Path] = None
 ) -> MoodleExtractedData:
     """
-    Vollständiges Parsing eines Moodle-Backups
+    Vollständiges Parsing eines Moodle-Backups mit erweiterter Medienintegration
     
     Args:
         backup_xml_path: Pfad zu moodle_backup.xml
         course_xml_path: Pfad zu course/course.xml (optional)
         sections_path: Pfad zu sections/ oder section.xml (optional)
         activities_path: Pfad zu activities/ Verzeichnis (optional)
+        files_xml_path: Pfad zu files.xml (optional)
         
     Returns:
         MoodleExtractedData mit vollständigen Informationen
@@ -734,6 +1039,52 @@ def parse_moodle_backup_complete(
                         logger.warning("Fehler beim Parsen einer Activity", 
                                      activity_dir=str(activity_dir), error=str(e))
     
+    # Parse files (optional) - NEUE FUNKTIONALITÄT
+    files_data = []
+    media_collections = []
+    file_statistics = {}
+    
+    if files_xml_path and files_xml_path.exists():
+        try:
+            # Parse files.xml
+            files_info = parser.parse_files_xml(files_xml_path)
+            
+            # Konvertiere zu FileMetadata
+            files_data = parser.convert_files_to_metadata(files_info)
+            
+            # Erstelle Statistiken
+            file_statistics = parser.create_file_statistics(files_data)
+            
+            # Erstelle MediaCollections
+            if files_data:
+                # Hauptsammlung für den gesamten Kurs
+                main_collection = create_media_collection_from_files(
+                    files_data, 
+                    f"course_{course_info.course_id}_media",
+                    f"Medien für {course_info.fullname}"
+                )
+                main_collection.course_id = course_info.course_id
+                media_collections.append(main_collection)
+                
+                # Separate Sammlungen nach Medientyp
+                for media_type in MediaType:
+                    type_files = [f for f in files_data if f.media_type == media_type]
+                    if type_files:
+                        # Stelle sicher, dass media_type.value existiert
+                        media_type_str = media_type.value if hasattr(media_type, 'value') else str(media_type)
+                        type_collection = create_media_collection_from_files(
+                            type_files,
+                            f"course_{course_info.course_id}_{media_type_str}",
+                            f"{media_type_str.title()} Dateien"
+                        )
+                        type_collection.course_id = course_info.course_id
+                        media_collections.append(type_collection)
+            
+            logger.info(f"Successfully parsed {len(files_data)} files with media integration")
+            
+        except XMLParsingError as e:
+            logger.warning("Fehler beim Parsen der Dateien", error=str(e))
+    
     # Create basic educational metadata
     educational = EducationalMetadata(
         learning_resource_type=LearningResourceType.COURSE,
@@ -741,15 +1092,26 @@ def parse_moodle_backup_complete(
         intended_end_user_role=["student", "teacher"]
     )
     
-    return MoodleExtractedData(
+    # Create complete extracted data
+    extracted_data = MoodleExtractedData(
         course_id=course_info.course_id,
         course_name=course_info.fullname,
         course_short_name=course_info.shortname,
         course_summary=course_info.summary,
+        course_language="de",  # Default
+        course_format=course_info.format,
+        course_visible=True,  # Default
         dublin_core=dublin_core,
         educational=educational,
         sections=sections_data,
         activities=activities_data,
+        files=files_data,
+        media_collections=media_collections,
+        file_statistics=file_statistics,
+        backup_date=backup_info.backup_date,
         moodle_version=backup_info.moodle_version,
-        backup_version=backup_info.backup_version
-    ) 
+        backup_version=backup_info.backup_version,
+        extraction_timestamp=datetime.now()
+    )
+    
+    return extracted_data 
