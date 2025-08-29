@@ -19,7 +19,11 @@ source venv/bin/activate  # Linux/Mac
 pip install -e .
 ```
 
-### 2. 🎉 Demo starten (EMPFOHLEN)
+### 2. 🎉 Projekt starten
+
+Es gibt mehrere Möglichkeiten, das Projekt zu starten:
+
+#### Option A: Demo-Starter (EMPFOHLEN - Ein-Befehl-Lösung)
 ```bash
 # Komplette Demo (Backend + Frontend) mit einem Befehl
 python start_demo.py
@@ -27,29 +31,48 @@ python start_demo.py
 
 Das startet automatisch:
 - ⚡ **Backend** auf http://localhost:8000
-- 🌐 **Frontend** auf http://localhost:3000 (öffnet automatisch im Browser)
+- 🌐 **Frontend** auf http://localhost:5173+ (modernes Vite-React-Interface, automatische Port-Erkennung)
+- 🌐 **Browser** öffnet automatisch auf korrektem Port
+
+#### Option B: Manuell (für Entwickler)
+```bash
+# Terminal 1: Backend starten
+source venv/bin/activate
+cd services/extractor
+python main.py
+
+# Terminal 2: Frontend starten
+cd frontend-vite
+npm install  # nur beim ersten Mal
+npm run dev
+```
+
+Das startet:
+- ⚡ **Backend** auf http://localhost:8000
+- 🌐 **Frontend** auf http://localhost:5173 (modernes Vite-React-Interface)
+
+#### Option C: Docker Compose
+```bash
+# Nur Backend mit Docker
+docker-compose -f docker-compose.simple.yml up --build
+
+# Frontend + Backend mit Docker (Development-Setup)
+docker-compose -f docker-compose.dev.yml up -d
+
+# Vollständige Services (erfordert weitere Entwicklung)
+# docker-compose up --build
+```
+
+Das startet (mit `docker-compose.dev.yml`):
+- ⚡ **Backend** auf http://localhost:8000 (Docker Container)
+- 🌐 **Frontend** auf http://localhost:5173 (Vite Dev Server in Docker)
 
 **Zum Testen:**
 1. MBZ-Datei per Drag & Drop hochladen
 2. Metadaten werden automatisch extrahiert  
 3. Ergebnisse werden schön angezeigt
 
-### 3. Manuell starten
-
-#### Backend (FastAPI Service)
-```bash
-cd services/extractor
-python main.py
-```
-
-#### Frontend (Web-Interface)
-```bash
-# Neues Terminal
-cd frontend
-python serve.py
-```
-
-### 4. Tests ausführen
+### 3. Tests ausführen
 ```bash
 # Schnelltest aller Komponenten (empfohlen für ersten Check)
 python run_tests.py --components-only
@@ -86,7 +109,11 @@ python run_tests.py
 
 ```
 OERsyncAI/
-├── frontend/               # 🌐 Web-Interface
+├── frontend-vite/          # 🌐 Modernes React-Frontend (Vite)
+│   ├── src/               # React Komponenten
+│   ├── package.json       # NPM Dependencies
+│   └── README.md          # Frontend-Docs
+├── frontend/               # 🌐 Legacy Web-Interface
 │   ├── index.html         # Frontend UI
 │   ├── serve.py           # HTTP Server
 │   └── README.md          # Frontend-Docs
@@ -195,8 +222,14 @@ git clone <repo> && cd OERsyncAI
 python -m venv venv && source venv/bin/activate
 pip install -e . && python run_tests.py --components-only
 
-# Service starten
-cd services/extractor && python main.py
+# Frontend Dependencies installieren
+cd frontend-vite && npm install && cd ..
+
+# Backend starten
+cd services/extractor && python main.py &
+
+# Frontend starten
+cd ../frontend-vite && npm run dev
 ```
 
 ### 🔍 Code-Qualität

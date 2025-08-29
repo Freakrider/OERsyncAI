@@ -54,18 +54,48 @@ class DemoManager:
         """Starte Frontend Server"""
         print("🌐 Starte Frontend...")
         try:
-            frontend_dir = Path("frontend")
+            frontend_dir = Path("frontend-vite")
+            # Prüfe ob npm installiert ist
+            npm_check = subprocess.run(["npm", "--version"], capture_output=True, text=True)
+            if npm_check.returncode != 0:
+                print("❌ npm ist nicht installiert!")
+                return False
+            
+            # Installiere Dependencies falls node_modules nicht existiert
+            if not (frontend_dir / "node_modules").exists():
+                print("📦 Installiere Frontend Dependencies...")
+                npm_install = subprocess.run(["npm", "install"], cwd=frontend_dir, capture_output=True, text=True)
+                if npm_install.returncode != 0:
+                    print(f"❌ npm install fehlgeschlagen: {npm_install.stderr}")
+                    return False
+            
             self.frontend_process = subprocess.Popen(
-                [sys.executable, "serve.py", "--no-browser"],
+                ["npm", "run", "dev"],
                 cwd=frontend_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
             
-            # Warte kurz bis Frontend bereit ist
-            time.sleep(2)
-            print("✅ Frontend läuft auf: http://localhost:3000")
-            return True
+            # Warte bis Frontend bereit ist
+            for i in range(15):  # 15 Sekunden timeout
+                try:
+                    import requests
+                    # Versuche verschiedene Ports, da Vite automatisch wechselt
+                    for port in [5173, 5174, 5175, 5176]:
+                        try:
+                            response = requests.get(f"http://localhost:{port}", timeout=1)
+                            if response.status_code == 200:
+                                print(f"✅ Frontend läuft auf: http://localhost:{port}")
+                                return True
+                        except:
+                            continue
+                except:
+                    pass
+                time.sleep(1)
+                print(f"⏳ Warte auf Frontend... ({i+1}/15)")
+            
+            print("❌ Frontend konnte nicht gestartet werden")
+            return False
             
         except Exception as e:
             print(f"❌ Fehler beim Starten des Frontends: {e}")
@@ -74,7 +104,18 @@ class DemoManager:
     def open_browser(self):
         """Öffne Browser mit Frontend"""
         print("🌐 Öffne Browser...")
-        webbrowser.open("http://localhost:3000")
+        # Versuche verschiedene Ports zu finden
+        for port in [5173, 5174, 5175, 5176]:
+            try:
+                import requests
+                response = requests.get(f"http://localhost:{port}", timeout=1)
+                if response.status_code == 200:
+                    webbrowser.open(f"http://localhost:{port}")
+                    return
+            except:
+                continue
+        # Fallback auf Standard Vite Port
+        webbrowser.open("http://localhost:5173")
     
     def stop_services(self):
         """Stoppe alle Services"""
@@ -117,7 +158,7 @@ class DemoManager:
         print("\n" + "=" * 60)
         print("🎉 Demo läuft!")
         print("=" * 60)
-        print("📱 Frontend: http://localhost:3000")
+        print("📱 Frontend: http://localhost:5173 (oder nächster verfügbarer Port)")
         print("⚡ Backend:  http://localhost:8000")
         print("📚 API Docs: http://localhost:8000/docs")
         print("=" * 60)

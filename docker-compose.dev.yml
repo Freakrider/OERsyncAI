@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # Backend Service (Docker)
+  extractor:
+    build:
+      context: ./services/extractor
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - SERVICE_NAME=extractor
+      - SERVICE_PORT=8000
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./shared:/app/shared
+      - ./examples:/app/examples
+    networks:
+      - oersync-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend Development (Vite Dev Server in Container)
+  frontend-dev:
+    image: node:18-alpine
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./frontend-vite:/app
+    networks:
+      - oersync-network
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - extractor
+
+networks:
+  oersync-network:
+    driver: bridge
