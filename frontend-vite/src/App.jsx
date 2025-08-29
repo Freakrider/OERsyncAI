@@ -26,6 +26,7 @@ function MainApp() {
   const [statusType, setStatusType] = useState('');
   const [activeTab, setActiveTab] = useState('upload');
   const [headerHeight, setHeaderHeight] = useState(0);
+  const [compactHeaderFooter, setCompactHeaderFooter] = useState(false);
   const headerRef = useRef(null);
 
   useEffect(() => {
@@ -48,7 +49,13 @@ function MainApp() {
   // Upload-Callback
   function handleUploadSuccess(newJobId) {
     handleStatus('Verarbeitung läuft...', 'loading');
+    setCompactHeaderFooter(true); // Kompakt-Modus aktivieren
     pollJobStatus(newJobId);
+  }
+
+  // Callback für Schnell-Analyse (direkt in UploadSection)
+  function handleUploadStarted() {
+    setCompactHeaderFooter(true);
   }
 
   // Polling für Job-Status und Laden der Ergebnisse
@@ -105,7 +112,7 @@ function MainApp() {
       icon: Upload,
       content: (
         <div className="space-y-6">
-          <UploadSection onUploadSuccess={handleUploadSuccess} onStatusChange={handleStatus} />
+          <UploadSection onUploadSuccess={handleUploadSuccess} onStatusChange={handleStatus} onUploadStarted={handleUploadStarted} />
           <StatusBar message={statusMsg} type={statusType} />
         </div>
       )
@@ -140,56 +147,139 @@ function MainApp() {
       {/* Header */}
       <header
         ref={headerRef}
-        className="header fixed top-0 left-0 w-full z-30 transition-all duration-300"
+        className={`header fixed top-0 left-0 w-full z-30 transition-all duration-300${compactHeaderFooter ? ' compact' : ''}`}
         style={{
           background: '#002b44',
           borderRadius: 0,
-          paddingTop: '1.2rem',
-          paddingBottom: '1.2rem',
+          paddingTop: compactHeaderFooter ? '0.1rem' : '0.7rem',
+          paddingBottom: compactHeaderFooter ? '0.1rem' : '0.7rem',
           boxShadow: '0 2px 12px #002b4440',
-          minHeight: '60px',
+          minHeight: compactHeaderFooter ? '32px' : '48px',
         }}
       >
         <div className="header-blur-bg" style={{display: 'none'}}></div>
-        <div className="header-content flex-col items-center text-center justify-center w-full" style={{padding: 0}}>
-          <h1 className="header-title w-full" style={{color: 'white', textAlign: 'center', fontWeight: 700, letterSpacing: '-1px', margin: 0, fontSize: '2rem', lineHeight: 1.1}}>
-            OERSync-AI
-          </h1>
-          <p className="header-subtitle w-full" style={{color: 'white', textAlign: 'center', fontSize: '1.1rem', opacity: 0.95, fontWeight: 400, margin: 0, lineHeight: 1.1}}>
-            Automatische Metadaten-Extraktion für Moodle-Kurse
-          </p>
-          <button className="header-btn mx-auto mt-2" style={{fontSize: '1em', padding: '0.4rem 1.2rem'}}>Preview Mode</button>
-        </div>
+        {/* Kompakter Header nach Upload: alles in einer Zeile */}
+        {compactHeaderFooter ? (
+          <div className="w-full flex flex-row items-center justify-between px-4" style={{gap: '1.2rem', minHeight: '32px'}}>
+            <h1 className="header-title" style={{color: 'white', fontWeight: 700, letterSpacing: '-1px', margin: 0, fontSize: '1.1rem', lineHeight: 1.1, minWidth: '140px', textAlign: 'left'}}>
+              OERSync-AI
+            </h1>
+            <p className="header-subtitle" style={{color: 'white', fontSize: '0.85rem', opacity: 0.95, fontWeight: 400, margin: 0, lineHeight: 1.1, minWidth: '220px', textAlign: 'left'}}>
+              Automatische Metadaten-Extraktion für Moodle-Kurse
+            </p>
+            <div className="flex-1 flex justify-center">
+              <div className="flex space-x-2 z-20" style={{minHeight: '28px'}}>
+                {tabs.map((tab) => {
+                  const IconComponent = tab.icon;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      className={`tab-button flex items-center gap-2 px-3 py-1 transition-colors duration-150 ${
+                        isActive ? 'font-bold underline' : ''
+                      } ${tab.disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      onClick={() => !tab.disabled && setActiveTab(tab.id)}
+                      disabled={tab.disabled}
+                      style={{
+                        color: isActive ? '#fff' : 'rgba(255,255,255,0.75)',
+                        background: 'transparent',
+                        border: 'none',
+                        fontSize: '0.92em',
+                        minHeight: '28px',
+                        borderBottom: isActive ? '2.5px solid #fff' : '2.5px solid transparent',
+                        borderRadius: 0,
+                        outline: 'none',
+                      }}
+                    >
+                      <IconComponent className="w-4 h-4" style={{color: isActive ? '#fff' : 'rgba(255,255,255,0.75)'}} />
+                      <span>{tab.label}</span>
+                      {tab.disabled && (
+                        <div className="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <button className="header-btn" style={{
+              fontSize: '0.8em',
+              padding: '0.15rem 0.7rem',
+              marginLeft: 'auto',
+              zIndex: 10
+            }}>Preview Mode</button>
+          </div>
+        ) : (
+          <div className={`header-content w-full flex flex-col items-center text-center justify-center`} style={{padding: 0}}>
+            <button className="header-btn" style={{
+              position: 'absolute',
+              top: '0.7rem',
+              right: '2.5rem',
+              fontSize: '1em',
+              padding: '0.3rem 1.1rem',
+              zIndex: 10
+            }}>Preview Mode</button>
+            <h1 className="header-title" style={{color: 'white', fontWeight: 700, letterSpacing: '-1px', margin: 0, fontSize: '1.7rem', lineHeight: 1.1}}>
+              OERSync-AI
+            </h1>
+            <p className="header-subtitle" style={{color: 'white', fontSize: '1rem', opacity: 0.95, fontWeight: 400, margin: 0, lineHeight: 1.1, marginBottom: '0.5rem'}}>
+              Automatische Metadaten-Extraktion für Moodle-Kurse
+            </p>
+            <div
+              className="flex space-x-2 mt-2 mb-0 z-20 justify-center"
+              style={{
+                width: '100%',
+                maxWidth: '800px',
+                margin: '0 auto',
+                background: 'transparent',
+                borderRadius: 0,
+                padding: 0,
+                boxShadow: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                minHeight: '36px',
+              }}
+            >
+              {tabs.map((tab) => {
+                const IconComponent = tab.icon;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    className={`tab-button flex items-center gap-2 px-3 py-1 transition-colors duration-150 ${
+                      isActive ? 'font-bold underline' : ''
+                    } ${tab.disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    onClick={() => !tab.disabled && setActiveTab(tab.id)}
+                    disabled={tab.disabled}
+                    style={{
+                      color: isActive ? '#fff' : 'rgba(255,255,255,0.75)',
+                      background: 'transparent',
+                      border: 'none',
+                      fontSize: '1em',
+                      minHeight: '36px',
+                      borderBottom: isActive ? '2.5px solid #fff' : '2.5px solid transparent',
+                      borderRadius: 0,
+                      outline: 'none',
+                    }}
+                  >
+                    <IconComponent className="w-4 h-4" style={{color: isActive ? '#fff' : 'rgba(255,255,255,0.75)'}} />
+                    <span>{tab.label}</span>
+                    {tab.disabled && (
+                      <div className="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Platzhalter für festen Header (dynamisch) */}
       <div style={{height: headerHeight}}></div>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8 flex-1 flex flex-col items-center justify-start">
-        {/* Tab Navigation */}
-        <div className="flex space-x-1 bg-muted p-1 rounded-lg mb-8">
-          {tabs.map((tab) => {
-            const IconComponent = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                className={`tab-button flex items-center gap-2 ${
-                  activeTab === tab.id ? 'active' : ''
-                } ${tab.disabled ? 'disabled' : ''}`}
-                onClick={() => !tab.disabled && setActiveTab(tab.id)}
-                disabled={tab.disabled}
-              >
-                <IconComponent className="w-4 h-4" />
-                <span>{tab.label}</span>
-                {tab.disabled && (
-                  <div className="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
+      <main className="container mx-auto px-4 py-8 flex-1 flex flex-col items-center
+       justify-center">
         {/* Tab Content */}
         <div className="space-y-6 w-full flex flex-col items-center justify-center">
           {tabs.find(tab => tab.id === activeTab)?.content}
@@ -197,12 +287,12 @@ function MainApp() {
       </main>
 
       {/* Footer */}
-      <footer className="footer relative overflow-visible mt-0" style={{background: '#002b44', position: 'sticky', bottom: 0, left: 0, width: '100%'}}>
+      <footer className={`footer relative overflow-visible mt-0${compactHeaderFooter ? ' compact' : ''}`} style={{background: '#002b44', position: 'sticky', bottom: 0, left: 0, width: '100%', minHeight: compactHeaderFooter ? '36px' : undefined, padding: compactHeaderFooter ? '0.2rem 0' : undefined, borderRadius: 0}}>
         <div className="footer-blur-bg" style={{display: 'none'}}></div>
-        <div className="footer-content">
-          <img src="/orca_nrw.png" alt="ORCA.nrw Logo" className="footer-logo" />
-          <img src="/moodle_nrw.png" alt="Moodle.NRW Logo" className="footer-logo" />
-          <span className="footer-text">Gefördert durch das Land NRW · Partner: Moodle.NRW & ORCA.nrw</span>
+        <div className="footer-content" style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: compactHeaderFooter ? '1.2rem' : '2.5rem'}}>
+          <img src="/orca_nrw.png" alt="ORCA.nrw Logo" className="footer-logo" style={{height: compactHeaderFooter ? '22px' : '36px'}} />
+          <img src="/moodle_nrw.png" alt="Moodle.NRW Logo" className="footer-logo" style={{height: compactHeaderFooter ? '22px' : '36px'}} />
+          <span className="footer-text" style={{fontSize: compactHeaderFooter ? '0.8rem' : undefined}}>Gefördert durch das Land NRW · Partner: Moodle.NRW & ORCA.nrw</span>
         </div>
       </footer>
     </div>

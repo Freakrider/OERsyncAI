@@ -134,19 +134,13 @@ export default function UploadSection({ onUploadSuccess, onStatusChange }) {
       </button>
       <button
         className="upload-btn"
+        style={{ background: '#10b981', color: 'white', marginLeft: 8 }}
         onClick={uploadFile}
         disabled={!selectedFile || uploading}
       >
         Analysieren
       </button>
-      <button
-        className="upload-btn"
-        style={{ background: '#10b981', color: 'white', marginLeft: 8 }}
-        onClick={quickAnalyze}
-        disabled={!selectedFile || uploading}
-      >
-        Schnell-Analyse
-      </button>
+
       {selectedFile && (
         <div id="selectedFile" style={{ marginTop: 15, color: '#64748b' }}>
           Ausgewählte Datei: <strong>{selectedFile.name}</strong> ({formatFileSize(selectedFile.size)})

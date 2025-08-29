@@ -872,7 +872,7 @@
     justify-content: center;
   }
   .footer-logo {
-    filter: drop-shadow(0 0 8px #3b82f6cc);
+
     transition: filter 0.3s;
     height: 40px;
     max-width: 160px;
