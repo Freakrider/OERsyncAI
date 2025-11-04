@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { CourseProvider } from './context/CourseContext';
 import { useCourse } from './context/useCourse';
 import UploadSection from './components/UploadSection';
@@ -6,17 +6,11 @@ import StatusBar from './components/StatusBar';
 import CourseSummary from './components/CourseSummary';
 import MetadataDisplay from './components/MetadataDisplay';
 import CourseVisualizer from './components/CourseVisualizer';
-import { Card, CardContent } from './components/ui/card';
-import { Badge } from './components/ui/badge';
-import { 
-  Upload, 
-  BarChart3, 
-  BookOpen, 
-  Globe,
-  Award,
-  Clock,
-  Users,
-  FileText
+import IliasAnalysisView from './components/IliasAnalysisView';
+import {
+  Upload,
+  BarChart3,
+  BookOpen,
 } from 'lucide-react';
 import './App.css';
 
@@ -27,7 +21,10 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState('upload');
   const [headerHeight, setHeaderHeight] = useState(0);
   const [compactHeaderFooter, setCompactHeaderFooter] = useState(false);
+  const [currentFileType, setCurrentFileType] = useState('moodle'); // Track current analysis type
   const headerRef = useRef(null);
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+  const ILIAS_API_BASE_URL = import.meta.env.VITE_ILIAS_API_URL || 'http://localhost:8004';
 
   useEffect(() => {
     function updateHeaderHeight() {
@@ -47,10 +44,11 @@ function MainApp() {
   }
 
   // Upload-Callback
-  function handleUploadSuccess(newJobId) {
+  function handleUploadSuccess(newJobId, fileType = 'moodle') {
     handleStatus('Verarbeitung läuft...', 'loading');
     setCompactHeaderFooter(true); // Kompakt-Modus aktivieren
-    pollJobStatus(newJobId);
+    setCurrentFileType(fileType);
+    pollJobStatus(newJobId, fileType);
   }
 
   // Callback für Schnell-Analyse (direkt in UploadSection)
@@ -59,16 +57,19 @@ function MainApp() {
   }
 
   // Polling für Job-Status und Laden der Ergebnisse
-  async function pollJobStatus(jobId) {
+  async function pollJobStatus(jobId, fileType = 'moodle') {
     let attempts = 0;
     const maxAttempts = 60;
+    const baseUrl = fileType === 'ilias' ? ILIAS_API_BASE_URL : API_BASE_URL;
+    const endpoint = fileType === 'ilias' ? 'analyze' : 'extract';
+    
     async function check() {
       try {
-        const response = await fetch(`http://localhost:8000/extract/${jobId}/status`);
+        const response = await fetch(`${baseUrl}/${endpoint}/${jobId}/status`);
         const data = await response.json();
         if (data.status === 'completed') {
           handleStatus('Verarbeitung abgeschlossen!', 'success');
-          fetchResults(jobId);
+          fetchResults(jobId, fileType);
           // Automatisch zu den Ergebnissen wechseln
           setActiveTab('results');
         } else if (data.status === 'failed') {
@@ -88,20 +89,49 @@ function MainApp() {
     check();
   }
 
-  async function fetchResults(jobId) {
+  async function fetchResults(jobId, fileType = 'moodle') {
     try {
-      const response = await fetch(`http://localhost:8000/extract/${jobId}`);
+      const baseUrl = fileType === 'ilias' ? ILIAS_API_BASE_URL : API_BASE_URL;
+      const endpoint = fileType === 'ilias' ? 'analyze' : 'extract';
+      const response = await fetch(`${baseUrl}/${endpoint}/${jobId}`);
       const data = await response.json();
+      
+      // Just set the data directly - the view components will handle the format
       setCourseData(data);
     } catch {
       handleStatus('Fehler beim Laden der Ergebnisse', 'error');
     }
   }
+  
+  // Transform ILIAS data to match Moodle data structure (only for pure ILIAS analysis)
+  function transformIliasData(iliasData) {
+    const analysisData = iliasData.analysis_data || {};
+    
+    return {
+      ...iliasData,
+      extracted_data: {
+        course_name: analysisData.course_title || 'ILIAS Kurs',
+        course_summary: `ILIAS Export - ${analysisData.modules_count || 0} Module`,
+        sections: analysisData.modules || [],
+        activities: analysisData.modules?.flatMap(module => 
+          module.items?.map(item => ({
+            ...item,
+            module_name: module.title,
+            module_type: module.type
+          })) || []
+        ) || [],
+        moodle_version: 'ILIAS Import',
+        backup_date: iliasData.created_at
+      }
+    };
+  }
 
   // Hilfsfunktion: Hat das courseData mehr als nur activities?
   function hasCourseMeta(data) {
     const d = data?.extracted_data || data;
-    return !!(d.sections || d.course_name || d.dublin_core);
+    // Check for MBZ data OR ILIAS analysis_data
+    const hasIliasData = data?.analysis_data?.course_title || data?.analysis_data?.modules;
+    return !!(d.sections || d.course_name || d.dublin_core || hasIliasData);
   }
 
   // Tab-Konfiguration mit modernen Icons
@@ -123,8 +153,17 @@ function MainApp() {
       icon: BarChart3,
       content: courseData && (
         <div className="space-y-6">
-          {hasCourseMeta(courseData) && <CourseSummary data={courseData} />}
-          {hasCourseMeta(courseData) && <MetadataDisplay data={courseData} />}
+          {/* If we have extracted_data (MBZ or ILIAS→MBZ), show normal view */}
+          {courseData.extracted_data && (
+            <>
+              <CourseSummary data={courseData} />
+              <MetadataDisplay data={courseData} />
+            </>
+          )}
+          {/* If we only have analysis_data (pure ILIAS), show ILIAS view */}
+          {!courseData.extracted_data && courseData.analysis_data && (
+            <IliasAnalysisView data={courseData} />
+          )}
         </div>
       ),
       disabled: !courseData

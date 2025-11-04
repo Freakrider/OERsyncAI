@@ -50,6 +50,32 @@ services:
       retries: 3
       start_period: 40s
 
+  # ILIAS Analyzer Service
+  ilias-analyzer:
+    build:
+      context: .
+      dockerfile: ./services/ilias-analyzer/Dockerfile
+    ports:
+      - "8004:8002"
+    environment:
+      - SERVICE_NAME=ilias-analyzer
+      - SERVICE_PORT=8002
+      - LOG_LEVEL=INFO
+      - EXTRACTOR_URL=http://extractor:8000
+    volumes:
+      - ./services/ilias-analyzer:/app
+      - ./shared:/app/shared
+    networks:
+      - oersync-network
+    depends_on:
+      - extractor
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   # API Gateway
   gateway:
     build:
@@ -63,6 +89,7 @@ services:
       - LOG_LEVEL=INFO
       - EXTRACTOR_URL=http://extractor:8000
       - LLM_ORCHESTRATOR_URL=http://llm-orchestrator:8000
+      - ILIAS_ANALYZER_URL=http://ilias-analyzer:8002
       - REDIS_URL=redis://redis:6379
     volumes:
       - ./services/gateway:/app
@@ -70,6 +97,7 @@ services:
     depends_on:
       - extractor
       - llm-orchestrator
+      - ilias-analyzer
       - redis
     networks:
       - oersync-network

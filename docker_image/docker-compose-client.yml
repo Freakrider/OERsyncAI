@@ -1,0 +1,40 @@
+services:
+  moodle:
+    image: my-moodle:installed
+    container_name: moodle
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      SKIP_INSTALL: "true"
+      MOODLE_DB_HOST: mariadb
+      MOODLE_DB_NAME: moodle
+      MOODLE_DB_USER: moodle
+      MOODLE_DB_PASSWORD: moodlepass
+      MOODLE_URL: http://localhost:8080
+    depends_on:
+      - mariadb
+    networks:
+      - moodle-network
+
+  mariadb:
+    image: my-moodle-db:installed
+    container_name: moodle-db
+    restart: unless-stopped
+    volumes:
+      - moodle_mariadb_data:/var/lib/mysql
+    networks:
+      - moodle-network
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max-allowed-packet=64M
+      --wait-timeout=600
+
+volumes:
+  moodle_mariadb_data:
+    external: true
+
+networks:
+  moodle-network:
+    driver: bridge

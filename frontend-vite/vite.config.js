@@ -7,4 +7,9 @@ export default defineConfig({
   css: {
     postcss: './postcss.config.js',
   },
+  server: {
+    proxy: {
+      '/media': 'http://localhost:8000',
+    },
+  },
 })

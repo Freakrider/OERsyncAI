@@ -11,7 +11,7 @@
 
 ### 2. **Frontend-Features**
 - **Drag & Drop Upload** für MBZ-Dateien mit Validierung
-- **Real-time Processing** mit Job-Status-Polling 
+- **Real-time Processing** mit Job-Status-Polling
 - **Tab-Navigation** (Upload, Ergebnisse, Kurs-Ansicht)
 - **Responsive Header/Footer** mit Kompakt-Modus
 - **Gitpod-Integration** für Moodle-Instanz-Start
@@ -49,6 +49,7 @@ async function uploadFile() {
         method: 'POST',
         body: formData,
     });
+
     const data = await response.json();
     onUploadSuccess(data.job_id);
 }
@@ -60,11 +61,11 @@ async function uploadFile() {
 async function pollJobStatus(jobId) {
     let attempts = 0;
     const maxAttempts = 60;
-    
+
     async function check() {
         const response = await fetch(`http://localhost:8000/extract/${jobId}/status`);
         const data = await response.json();
-        
+
         if (data.status === 'completed') {
             fetchResults(jobId);
             setActiveTab('results'); // Automatisch zu Ergebnissen wechseln
@@ -260,7 +261,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 3. Frontend POSTs to /extract API
 4. Backend returns job_id
 5. useEffect hook polls /extract/{job_id}/status
-6. When completed: 
+6. When completed:
    - fetchResults() loads metadata
    - setActiveTab('results') switches view
    - CourseSummary shows stats + Gitpod button
@@ -291,7 +292,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 // React courseData state
 {
   "job_id": "12345-abcd-6789",
-  "file_name": "063_PFB1.mbz", 
+  "file_name": "063_PFB1.mbz",
   "file_size": 378332,
   "processing_time_seconds": 0.07,
   "extracted_data": {
@@ -338,10 +339,10 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 ### Development Setup
 - **Vite + React + Tailwind** Stack ist modern und zukunftssicher
-- **Hot Module Replacement** für schnelle Entwicklung  
+- **Hot Module Replacement** für schnelle Entwicklung
 - **ESLint + Prettier** für Code Quality
 - **Component-basierte Architektur** für Maintainability
 
 ---
 
-🎓 **OERSync-AI React Frontend** - Modern, skalierbar und entwicklerfreundlich mit Vite! 
+🎓 **OERSync-AI React Frontend** - Modern, skalierbar und entwicklerfreundlich mit Vite!

@@ -1,12 +1,12 @@
 import React, { useState, useRef } from 'react';
-import { 
-  BookOpen, 
-  MessageSquare, 
-  FileText, 
-  Video, 
-  Users, 
-  Award, 
-  CheckCircle, 
+import {
+  BookOpen,
+  MessageSquare,
+  FileText,
+  Video,
+  Users,
+  Award,
+  CheckCircle,
   Clock,
   Globe,
   Download,
@@ -32,13 +32,15 @@ import {
   BookMarked,
   GraduationCap,
   Eye,
-  EyeOff
+  EyeOff,
+  BookOpenCheckIcon
 } from 'lucide-react';
 
 // Activity Icon Mapping
 const activityIcons = {
   forum: MessageSquare,
   choice: BarChart3,
+  booking: BookOpenCheckIcon,
   survey: CheckCircle,
   data: Database,
   bigbluebuttonbn: Video,
@@ -64,6 +66,7 @@ const activityIcons = {
 const activityNames = {
   forum: 'Forum',
   choice: 'Abstimmung',
+  booking: 'Buchungsoption',
   survey: 'Umfrage',
   data: 'Datenbank',
   bigbluebuttonbn: 'BigBlueButton',
@@ -89,18 +92,27 @@ export default function CourseVisualizer({ data }) {
   const [expandedSections, setExpandedSections] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const exportRef = useRef();
-  
+
   // Use provided data
   const courseData = data?.extracted_data || data || {};
   const sections = courseData.sections || [];
   const activities = courseData.activities || [];
-  
+
   // Map activities from the JSON format to a more usable format
   const getMappedSections = () => {
     if (activities.length === 0) return [];
-    
+
     // Group activities by section
     const sectionMap = {};
+
+    sections.forEach((section, idx) => {
+        sectionMap[idx] = {
+        id: idx,
+        name: section.name || `Section ${idx}`,
+        activities: []
+        };
+    });
+
     activities.forEach(activity => {
       const sectionNum = activity.section_number || 0;
       if (!sectionMap[sectionNum]) {
@@ -110,26 +122,21 @@ export default function CourseVisualizer({ data }) {
           activities: []
         };
       }
-      
+
       // Extract activity type from activity_type field
-      let activityType = 'activity';
-      if (activity.activity_type) {
-        activityType = activity.activity_type.replace('activity', '').trim() || 'activity';
-      }
-      
       sectionMap[sectionNum].activities.push({
         id: activity.activity_id,
         name: activity.module_name,
-        type: activityType,
-        visible: activity.visible !== false
+        type: activity.type,
+        visible: activity.visible !== false,
+        intro: activity.intro || ''
       });
     });
-    
+
     return Object.values(sectionMap);
   };
-  
-  const mappedSections = sections.length > 0 ? sections : getMappedSections();
-  
+
+  const mappedSections = getMappedSections();
   const toggleSection = (sectionId) => {
     setExpandedSections(prev => ({
       ...prev,
@@ -162,6 +169,32 @@ export default function CourseVisualizer({ data }) {
     URL.revokeObjectURL(url);
   };
 
+  const truncateText = (html, maxLength = 100) => {
+    if (!html) return '';
+
+    // Extract <img> and <video> tags before stripping text
+    const mediaTags = [];
+    html = html.replace(/<(img|video|source)[^>]*>/gi, (match) => {
+        mediaTags.push(match);
+        return `[[MEDIA_${mediaTags.length - 1}]]`; // temporary placeholder
+    });
+
+    // Strip all other HTML tags (but keep text)
+    const textOnly = html.replace(/<[^>]+>/g, '');
+
+    // Truncate text
+    const truncatedText =
+        textOnly.length > maxLength ? textOnly.substring(0, maxLength) + '…' : textOnly;
+
+    // Reinsert media tags in their original order
+    let reconstructed = truncatedText;
+    mediaTags.forEach((tag, i) => {
+        reconstructed = reconstructed.replace(`[[MEDIA_${i}]]`, tag);
+    });
+
+    return reconstructed;
+  };
+
   return (
     <div className="flex gap-6 max-w-7xl mx-auto">
       {/* Main Content */}
@@ -179,7 +212,7 @@ export default function CourseVisualizer({ data }) {
         <div ref={exportRef}>
           {/* Course Header */}
           <div className="bg-white rounded-lg shadow-lg mb-6 overflow-hidden">
-            <div 
+            <div
               className="h-48 bg-cover bg-center relative"
               style={{
                 backgroundImage: 'url(https://images.unsplash.com/photo-1488190211105-8b0e65b80b4e?w=800&h=400&fit=crop)',
@@ -195,7 +228,8 @@ export default function CourseVisualizer({ data }) {
                   {courseData.course_name || 'Digital Literacy'}
                 </h1>
                 <p className="text-gray-200">
-                  {courseData.course_summary || 'Introducing the concept of Digital Literacy. Optimised for mobile.'}
+                    {truncateText(courseData.course_summary) ||
+                        'Introducing the concept of Digital Literacy. Optimised for mobile.'}
                 </p>
               </div>
             </div>
@@ -222,17 +256,16 @@ export default function CourseVisualizer({ data }) {
             {mappedSections.map((section, idx) => {
               const isExpanded = expandedSections[section.id] !== false; // Default expanded
               const sectionActivities = section.activities || [];
-              
               return (
                 <div key={section.id || idx} className="bg-white rounded-lg shadow-sm border border-gray-200">
-                  <div 
+                  <div
                     className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
                     onClick={() => toggleSection(section.id)}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        {isExpanded ? 
-                          <ChevronDown className="w-5 h-5 text-gray-500" /> : 
+                        {isExpanded ?
+                          <ChevronDown className="w-5 h-5 text-gray-500" /> :
                           <ChevronRight className="w-5 h-5 text-gray-500" />
                         }
                         <h3 className="text-lg font-semibold text-gray-900">
@@ -244,16 +277,15 @@ export default function CourseVisualizer({ data }) {
                       </span>
                     </div>
                   </div>
-                  
+
                   {isExpanded && (
                     <div className="px-4 pb-4">
                       <div className="space-y-2 ml-8">
                         {sectionActivities.map((activity, actIdx) => {
                           const IconComponent = activityIcons[activity.type] || activityIcons.activity;
                           const activityTypeName = activityNames[activity.type] || activityNames.activity;
-                          
                           return (
-                            <div 
+                            <div
                               key={activity.id || actIdx}
                               className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors group"
                             >
@@ -266,7 +298,12 @@ export default function CourseVisualizer({ data }) {
                                 <h4 className="font-medium text-gray-900 group-hover:text-blue-600 transition-colors">
                                   {activity.name || 'Untitled Activity'}
                                 </h4>
-                                <p className="text-sm text-gray-500">{activityTypeName}</p>
+                                <div
+                                    className="text-sm text-gray-500 italic"
+                                    dangerouslySetInnerHTML={{
+                                        __html: truncateText(activity.intro || `<em>${activityTypeName}</em>`, 100)
+                                    }}
+                                />
                               </div>
                               <div className="flex items-center gap-2">
                                 {activity.visible ? (

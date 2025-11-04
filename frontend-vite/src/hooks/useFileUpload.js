@@ -4,7 +4,7 @@ export default function useFileUpload() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(0);
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 
   async function uploadFile(file) {
     setUploading(true);
@@ -31,4 +31,4 @@ export default function useFileUpload() {
   }
 
   return { uploadFile, uploading, error, progress };
-} 
+}

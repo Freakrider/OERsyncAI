@@ -30,6 +30,11 @@ dependencies = [
     "pydantic>=2.4.0",
     "httpx>=0.25.0",
     "python-multipart>=0.0.6",
+    "psutil>=5.9.0",
+    "requests>=2.31.0",
+    "structlog>=23.1.0",
+    "beautifulsoup4>=4.12.2",
+    "openai>=1.0.0"
 ]
 
 [project.optional-dependencies]
@@ -101,4 +106,4 @@ testpaths = [
 python_files = [
     "test_*.py",
     "*_test.py",
-] 
+]

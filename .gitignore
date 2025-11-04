@@ -134,6 +134,7 @@ dmypy.json
 debug_test/
 temp_test/
 debug_xml.py
+dummy_files/
 
 # Test MBZ files (except example ones)
 *.mbz

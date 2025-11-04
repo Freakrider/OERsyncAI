@@ -1,93 +1,68 @@
-#!/usr/bin/env python3
-import os
 import sys
-import argparse
-import requests
-#TODO: In Progress - This is a test file to start a Gitpod workspace
-API_ENDPOINT = 'https://api.gitpod.io/gitpod.v1.WorkspaceService/CreateAndStartWorkspace'
+import subprocess
+from datetime import datetime
+import os
+import traceback
+
+def log(msg: str):
+    """Prints timestamped debug messages with a consistent prefix."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] 🐍 {msg}", flush=True)
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Starte eine Gitpod-Instanz über die Public API'
-    )
-    parser.add_argument(
-        'context_url',
-        help='Context URL für Gitpod, z.B. '
-             '"https://gitpod.io/#MOODLE_REPOSITORY=https://github.com/sarjona/moodle.git,MOODLE_BRANCH=MDL-79912-main/https://github.com/moodlehq/moodle-docker"'
-    )
-    parser.add_argument(
-        '--org-id',
-        default=os.getenv('GITPOD_ORG_ID'),
-        help='Gitpod Organization ID (env GITPOD_ORG_ID)'
-    )
-    parser.add_argument(
-        '--owner-id',
-        default=os.getenv('GITPOD_OWNER_ID'),
-        help='Gitpod User/Owner ID (env GITPOD_OWNER_ID)'
-    )
-    parser.add_argument(
-        '--workspace-class',
-        default='g1-standard',
-        help='Workspace-Ressourcenklasse (z.B. g1-standard)'
-    )
-    parser.add_argument(
-        '--editor-name',
-        default='code',
-        help='Editor-Name (z.B. code, intellij, etc.)'
-    )
-    parser.add_argument(
-        '--editor-version',
-        default='latest',
-        help='Editor-Version (z.B. stable, latest)'
-    )
-
-    args = parser.parse_args()
-
-    token = os.getenv('GITPOD_TOKEN')
-    if not token:
-        sys.stderr.write('Error: Bitte setze die Umgebungsvariable GITPOD_TOKEN\n')
+    if len(sys.argv) < 2:
+        print("❌ Usage: python start_gitpod.py <mbz_path>")
         sys.exit(1)
-    if not args.org_id or not args.owner_id:
-        sys.stderr.write(
-            'Error: Bitte setze GITPOD_ORG_ID und GITPOD_OWNER_ID '
-            'oder übergebe sie per --org-id/--owner-id\n'
+
+    mbz_path = os.path.abspath(sys.argv[1])
+    category_id = sys.argv[2] if len(sys.argv) > 2 else "1"
+    shortname = sys.argv[3] if len(sys.argv) > 3 else f"restored_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    fullname = sys.argv[4] if len(sys.argv) > 4 else f"Restored Course {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    script = "docker_image/setup-and-restore.sh"
+
+    print(f"📦 MBZ path       : {mbz_path}")
+    print(f"📁 Category ID    : {category_id}")
+    print(f"🔤 Course shortname : {shortname}")
+    print(f"📘 Course fullname  : {fullname}")
+    print(f"🚀 Running {script}...")
+
+    # Check if the script exists
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(base_dir, "docker_image", "setup-and-restore.sh")
+
+    if not os.path.isfile(script):
+        print(f"❌ Script not found at: {script}")
+        sys.exit(1)
+
+    try:
+        process = subprocess.Popen(
+            ["bash", script, mbz_path, category_id, shortname, fullname],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
-        sys.exit(1)
 
-    payload = {
-        "contextUrl": {
-            "url": args.context_url,
-            "workspaceClass": args.workspace_class,
-            "editor": {
-                "name": args.editor_name,
-                "version": args.editor_version
-            }
-        },
-        "metadata": {
-            "ownerId": args.owner_id,
-            "organizationId": args.org_id
-        }
-    }
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/json'
-    }
+        # Stream live output with timestamps
+        for line in process.stdout:
+            log(f"🧩 {line.strip()}")
 
-    resp = requests.post(API_ENDPOINT, json=payload, headers=headers)
-    if resp.status_code != 200:
-        sys.stderr.write(
-            f'Fehler beim Erstellen der Workspace (HTTP {resp.status_code}):\n'
-            f'{resp.text}\n'
-        )
-        sys.exit(1)
+        returncode = process.wait(timeout=600)
 
-    ws = resp.json().get('workspace', {})
-    wid = ws.get('id')
-    phase = ws.get('status', {}).get('phase')
-    print('✅ Workspace gestartet:')
-    print(f'   ID:     {wid}')
-    print(f'   Status: {phase}')
-    print(f'   URL:    https://gitpod.io/#workspace/{wid}')
+        if returncode == 0:
+            log("✅ Script completed successfully!")
+        else:
+            log(f"❌ Script exited with non-zero return code: {returncode}")
 
-if __name__ == '__main__':
-    main() 
+    except subprocess.TimeoutExpired:
+        log(f"❌ {script} timed out after 600s!")
+        process.kill()
+    except KeyboardInterrupt:
+        log("⛔ Interrupted by user.")
+        process.kill()
+    except Exception as e:
+        log(f"❌ Unexpected error: {str(e)}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()

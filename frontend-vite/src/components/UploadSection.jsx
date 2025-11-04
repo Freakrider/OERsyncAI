@@ -1,7 +1,9 @@
-import React, { useRef, useState } from 'react';
-import { useCourse } from '../context/useCourse';
+import { useRef, useState } from 'react';
 
-const ACCEPTED_TYPES = ['.mbz', '.zip', '.tar.gz'];
+const ACCEPTED_TYPES = {
+  moodle: ['.mbz', '.zip', '.tar.gz'],
+  ilias: ['.zip']
+};
 
 export default function UploadSection({ onUploadSuccess, onStatusChange }) {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -9,10 +11,12 @@ export default function UploadSection({ onUploadSuccess, onStatusChange }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(0);
+  const [fileType, setFileType] = useState('moodle'); // 'moodle' or 'ilias'
+  const [convertToMoodle, setConvertToMoodle] = useState(false); // For ILIAS conversion
   const fileInputRef = useRef();
-  const { setCourseData } = useCourse();
 
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+  const ILIAS_API_BASE_URL = import.meta.env.VITE_ILIAS_API_URL || 'http://localhost:8004';
 
   function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
@@ -28,6 +32,13 @@ export default function UploadSection({ onUploadSuccess, onStatusChange }) {
       setSelectedFile(file);
       setError(null);
     }
+  };
+
+  const handleFileTypeChange = (type) => {
+    setFileType(type);
+    setSelectedFile(null); // Reset file when switching types
+    setError(null);
+    setConvertToMoodle(false);
   };
 
   const handleDrop = (e) => {
@@ -55,72 +66,152 @@ export default function UploadSection({ onUploadSuccess, onStatusChange }) {
     setUploading(true);
     setError(null);
     setProgress(0);
-    onStatusChange && onStatusChange('Datei wird hochgeladen...', 'loading');
+    
+    const uploadTypeLabel = fileType === 'ilias' ? 'ILIAS-Export' : 'MBZ-Datei';
+    onStatusChange && onStatusChange(`${uploadTypeLabel} wird hochgeladen...`, 'loading');
+    
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
-      const response = await fetch(`${API_BASE_URL}/extract`, {
+      
+      // Use different API endpoints based on file type
+      const apiUrl = fileType === 'ilias' 
+        ? `${ILIAS_API_BASE_URL}/analyze${convertToMoodle ? '?convert_to_moodle=true' : ''}`
+        : `${API_BASE_URL}/extract`;
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      const data = await response.json();
+
+      const isJson = response.headers.get('content-type')?.includes('application/json');
+      const data = isJson ? await response.json() : null;
+
+      if (!response.ok) {
+        const error = new Error(data?.message || `HTTP ${response.status}: ${response.statusText}`);
+        error.data = data;
+        throw error;
+      }
+
       onStatusChange && onStatusChange('Verarbeitung gestartet...', 'loading');
       setProgress(30);
-      onUploadSuccess && onUploadSuccess(data.job_id);
+      onUploadSuccess && onUploadSuccess(data.job_id, fileType); // Pass fileType to parent
     } catch (err) {
-      setError('Fehler beim Upload: ' + err.message);
-      onStatusChange && onStatusChange('Fehler beim Upload: ' + err.message, 'error');
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function quickAnalyze() {
-    if (!selectedFile) {
-      setError('Bitte wähle zuerst eine Datei aus.');
-      return;
-    }
-    setUploading(true);
-    setError(null);
-    setProgress(0);
-    onStatusChange && onStatusChange('Datei wird hochgeladen...', 'loading');
-    try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      const response = await fetch(`${API_BASE_URL}/extract-activities`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      const data = await response.json();
-      setProgress(100);
-      setCourseData({ activities: data.activities });
-      onStatusChange && onStatusChange('Schnell-Analyse abgeschlossen!', 'success');
-    } catch (err) {
-      setError('Fehler bei Schnell-Analyse: ' + err.message);
-      onStatusChange && onStatusChange('Fehler bei Schnell-Analyse: ' + err.message, 'error');
+      const detailedMessage = err?.data?.message || err.message || 'Unbekannter Fehler beim Upload.';
+      setError('Fehler beim Upload: ' + detailedMessage);
+      onStatusChange && onStatusChange('Fehler beim Upload: ' + detailedMessage, 'error');
     } finally {
       setUploading(false);
     }
   }
 
   return (
-    <div
-      className={`upload-section${dragActive ? ' dragover' : ''}`}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      <h2>MBZ-Datei hochladen</h2>
+    <div>
+      {/* File Type Selector - OUTSIDE drag area */}
+      <div style={{ 
+        marginBottom: '20px', 
+        display: 'flex', 
+        gap: '10px', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        position: 'relative',
+        zIndex: 10
+      }}>
+        <button
+          onClick={() => handleFileTypeChange('moodle')}
+          style={{
+            padding: '10px 20px',
+            background: fileType === 'moodle' ? '#002b44' : '#f1f5f9',
+            color: fileType === 'moodle' ? 'white' : '#64748b',
+            border: fileType === 'moodle' ? '2px solid #002b44' : '2px solid #e2e8f0',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: fileType === 'moodle' ? 'bold' : 'normal',
+            transition: 'all 0.2s',
+            pointerEvents: uploading ? 'none' : 'auto'
+          }}
+          disabled={uploading}
+        >
+          📦 Moodle MBZ
+        </button>
+        <button
+          onClick={() => handleFileTypeChange('ilias')}
+          style={{
+            padding: '10px 20px',
+            background: fileType === 'ilias' ? '#002b44' : '#f1f5f9',
+            color: fileType === 'ilias' ? 'white' : '#64748b',
+            border: fileType === 'ilias' ? '2px solid #002b44' : '2px solid #e2e8f0',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontWeight: fileType === 'ilias' ? 'bold' : 'normal',
+            transition: 'all 0.2s',
+            pointerEvents: uploading ? 'none' : 'auto'
+          }}
+          disabled={uploading}
+        >
+          📚 ILIAS Export
+        </button>
+      </div>
+
+      {/* ILIAS-specific option: Convert to Moodle - OUTSIDE drag area */}
+      {fileType === 'ilias' && (
+        <div style={{ 
+          margin: '0 0 20px 0', 
+          padding: '12px 16px', 
+          background: '#f8fafc', 
+          borderRadius: '8px', 
+          border: '1px solid #e2e8f0',
+          position: 'relative',
+          zIndex: 10
+        }}>
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '10px', 
+            cursor: 'pointer', 
+            color: '#475569',
+            userSelect: 'none'
+          }}>
+            <input
+              type="checkbox"
+              checked={convertToMoodle}
+              onChange={(e) => setConvertToMoodle(e.target.checked)}
+              disabled={uploading}
+              style={{ 
+                cursor: 'pointer',
+                width: '18px',
+                height: '18px',
+                accentColor: '#002b44'
+              }}
+            />
+            <span style={{ fontSize: '14px', fontWeight: 500 }}>
+              Nach der Analyse in Moodle-Format (MBZ) konvertieren
+            </span>
+          </label>
+        </div>
+      )}
+
+      {/* Upload Section with Drag & Drop */}
+      <div
+        className={`upload-section${dragActive ? ' dragover' : ''}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+
+      <h2>{fileType === 'ilias' ? 'ILIAS-Export hochladen' : 'MBZ-Datei hochladen'}</h2>
       <p style={{ margin: '15px 0', color: '#64748b' }}>
-        Ziehen Sie Ihre Moodle-Backup-Datei (.mbz) hierher oder wählen Sie eine Datei aus
+        {fileType === 'ilias' 
+          ? 'Ziehen Sie Ihren ILIAS-Export (.zip) hierher oder wählen Sie eine Datei aus'
+          : 'Ziehen Sie Ihre Moodle-Backup-Datei (.mbz) hierher oder wählen Sie eine Datei aus'
+        }
       </p>
+
       <input
         type="file"
         ref={fileInputRef}
         className="file-input"
-        accept={ACCEPTED_TYPES.join(',')}
+        accept={ACCEPTED_TYPES[fileType].join(',')}
         style={{ display: 'none' }}
         onChange={handleFileChange}
         disabled={uploading}
@@ -152,6 +243,7 @@ export default function UploadSection({ onUploadSuccess, onStatusChange }) {
         </div>
       )}
       {error && <div className="status error">{error}</div>}
+      </div>
     </div>
   );
-} 
+}
