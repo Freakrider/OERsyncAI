@@ -79,6 +79,7 @@ class AnalysisResult(BaseModel):
     mbz_path: Optional[str] = None  # Path to converted MBZ file
     conversion_report: Optional[Dict[str, Any]] = None  # NEW: Conversion compatibility report
     moodle_structure: Optional[Dict[str, Any]] = None  # NEW: Moodle structure info
+    analysis_logs: Optional[List[Dict[str, Any]]] = None  # NEW: Analyzer logs for frontend
 
 class JobStatus(BaseModel):
     """Response model for job status"""
@@ -196,9 +197,13 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
         if not success:
             raise Exception("ILIAS analysis failed")
         
+        # Hole die gesammelten Logs
+        analysis_logs = analyzer.get_logs()
+        
         logger.info("ILIAS analysis completed", job_id=job_id, 
                    course_title=analyzer.course_title,
-                   modules_count=len(analyzer.modules))
+                   modules_count=len(analyzer.modules),
+                   log_entries=len(analysis_logs))
         
         mbz_path = None
         mbz_analysis_result = None
@@ -334,7 +339,8 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
                     "has_container_structure": analyzer.container_structure is not None
                 },
                 conversion_report=conversion_report,  # NEW
-                moodle_structure=structure_info  # NEW
+                moodle_structure=structure_info,  # NEW
+                analysis_logs=analysis_logs  # NEW: Logs ans Frontend
             )
         else:
             # Simple analysis without conversion (or conversion without extractor)
@@ -368,7 +374,8 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
                 moodle_mbz_available=is_mbz_available,
                 mbz_path=mbz_path if is_mbz_available else None,
                 conversion_report=conversion_report if is_mbz_available else None,  # NEW
-                moodle_structure=structure_info if is_mbz_available else None  # NEW
+                moodle_structure=structure_info if is_mbz_available else None,  # NEW
+                analysis_logs=analysis_logs  # NEW: Logs ans Frontend
             )
         
         logger.info("ILIAS processing completed successfully",

@@ -150,7 +150,9 @@ class StructureMapper:
         # Zähler für IDs
         self.next_section_id = 1
         self.next_activity_id = 1
-        self.next_module_id = 1000
+        # Modul-IDs und Activity-IDs sollen identisch bleiben, damit
+        # spätere Moodle-Parser eine eindeutige Zuordnung herstellen können.
+        self.next_module_id = 1
     
     def map_to_moodle(self) -> MoodleStructure:
         """

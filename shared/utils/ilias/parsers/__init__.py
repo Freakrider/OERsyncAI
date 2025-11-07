@@ -11,6 +11,9 @@ from .item_group import ItemGroupParser
 from .forum import ForumParser
 from .wiki import WikiParser
 from .exercise import ExerciseParser
+from .course import CourseParser
+from .media_pool import MediaPoolParser
+from .learning_module import LearningModuleParser
 
 __all__ = [
     'IliasComponentParser',
@@ -21,5 +24,8 @@ __all__ = [
     'ItemGroupParser',
     'ForumParser',
     'WikiParser',
-    'ExerciseParser'
+    'ExerciseParser',
+    'CourseParser',
+    'MediaPoolParser',
+    'LearningModuleParser'
 ] 

@@ -3,7 +3,37 @@ import { BookOpen, Layers, FileText, Download, CheckCircle, AlertTriangle, Info,
 
 export default function IliasAnalysisView({ data }) {
   const analysisData = data?.analysis_data;
+  const analysisLogs = data?.analysis_logs;
   const ILIAS_API_BASE_URL = import.meta.env.VITE_ILIAS_API_URL || 'http://localhost:8004';
+  
+  // Debug: Log die gesamten Daten
+  React.useEffect(() => {
+    console.log('🔍 IliasAnalysisView data:', data);
+    console.log('🔍 analysis_logs:', analysisLogs);
+  }, [data, analysisLogs]);
+  
+  // Log die Analyse-Logs ins Browser-Console
+  React.useEffect(() => {
+    if (analysisLogs && analysisLogs.length > 0) {
+      console.group('📋 ILIAS Analysis Logs');
+      analysisLogs.forEach(log => {
+        const style = `color: ${
+          log.level === 'ERROR' ? '#ef4444' :
+          log.level === 'WARNING' ? '#f59e0b' :
+          log.level === 'INFO' ? '#3b82f6' :
+          '#6b7280'
+        }; font-weight: ${log.level === 'ERROR' || log.level === 'WARNING' ? 'bold' : 'normal'}`;
+        
+        console.log(
+          `%c[${log.level}] ${log.timestamp} - ${log.message}`,
+          style
+        );
+      });
+      console.groupEnd();
+    } else {
+      console.warn('⚠️ Keine analysis_logs gefunden oder leeres Array');
+    }
+  }, [analysisLogs]);
   
   if (!analysisData) {
     return <div>Keine ILIAS-Daten verfügbar</div>;

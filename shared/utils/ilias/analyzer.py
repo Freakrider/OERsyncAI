@@ -15,9 +15,13 @@ from .parsers import (
     TestParser,
     MediaCastParser,
     FileParser,
-    ItemGroupParser
+    ItemGroupParser,
+    CourseParser,
+    MediaPoolParser,
+    LearningModuleParser
 )
 from .container_parser import ContainerStructureParser, ContainerStructure
+from ..log_handler import InMemoryLogHandler, create_log_handler
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,33 @@ class IliasAnalyzer:
         self.components = []
         self.course_structure = {}
         self.container_structure: Optional[ContainerStructure] = None
+        
+        # Log-Handler für Frontend-Ausgabe
+        self.log_handler: Optional[InMemoryLogHandler] = None
+        self._setup_logging()
+    
+    def _setup_logging(self):
+        """Richtet den Log-Handler für Frontend-Ausgabe ein."""
+        self.log_handler = create_log_handler(
+            logger_name='shared.utils.ilias.analyzer',
+            level=logging.INFO
+        )
+    
+    def get_logs(self) -> List[Dict[str, Any]]:
+        """
+        Gibt alle gesammelten Log-Nachrichten zurück.
+        
+        Returns:
+            Liste von Log-Einträgen als Dictionaries
+        """
+        if self.log_handler:
+            return self.log_handler.get_logs()
+        return []
+    
+    def clear_logs(self):
+        """Löscht alle gesammelten Log-Nachrichten."""
+        if self.log_handler:
+            self.log_handler.clear_logs()
     
     def add_module(self, id: str, title: str, type: str) -> Module:
         """Fügt ein Modul zum Kurs hinzu."""

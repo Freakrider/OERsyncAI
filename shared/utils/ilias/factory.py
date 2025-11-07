@@ -11,7 +11,10 @@ from .parsers import (
     TestParser,
     MediaCastParser,
     FileParser,
-    ItemGroupParser
+    ItemGroupParser,
+    CourseParser,
+    MediaPoolParser,
+    LearningModuleParser
 )
 
 logger = logging.getLogger(__name__)
@@ -21,10 +24,13 @@ class ParserFactory:
     
     # Mapping von Komponententypen zu Parser-Klassen
     _parsers: Dict[str, Type[IliasComponentParser]] = {
+        'crs': CourseParser,
         'grp': GroupParser,
         'fold': GroupParser,  # Folder (Ordner) sind strukturell ähnlich zu Groups
         'tst': TestParser,
         'mcst': MediaCastParser,
+        'mep': MediaPoolParser,
+        'lm': LearningModuleParser,
         'file': FileParser,
         'itgr': ItemGroupParser
     }

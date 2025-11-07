@@ -306,7 +306,7 @@ class MoodleConverter:
                     act_elem = ET.SubElement(activities, 'activity')
                     
                     moduleid = ET.SubElement(act_elem, 'moduleid')
-                    moduleid.text = str(activity.activity_id)
+                    moduleid.text = str(activity.module_id)
                     
                     sectionid = ET.SubElement(act_elem, 'sectionid')
                     sectionid.text = str(section.section_id)
@@ -318,7 +318,7 @@ class MoodleConverter:
                     title.text = activity.title
                     
                     directory = ET.SubElement(act_elem, 'directory')
-                    directory.text = f"activities/{activity.module_name}_{activity.activity_id}"
+                    directory.text = f"activities/{activity.module_name}_{activity.module_id}"
                     
                     insubsection = ET.SubElement(act_elem, 'insubsection')
         else:
@@ -755,32 +755,50 @@ class MoodleConverter:
         if self.moodle_structure:
             # Neue Struktur-basierte Generierung
             for section in self.moodle_structure.sections:
+                section_number = getattr(section, 'number', section.section_id)
                 for activity in section.activities:
-                    # Erstelle das Aktivitätsverzeichnis
-                    activity_dir = os.path.join(self.moodle_dir, 'activities', f"{activity.module_name}_{activity.activity_id}")
+                    activity_dir_name = f"{activity.module_name}_{activity.module_id}"
+                    activity_dir = os.path.join(self.moodle_dir, 'activities', activity_dir_name)
                     os.makedirs(activity_dir, exist_ok=True)
-                    
-                    # Hole das ursprüngliche Item aus den Komponenten
-                    item = self._get_item_by_id(activity.ilias_id) if hasattr(activity, 'ilias_id') and activity.ilias_id else {}
-                    
-                    # Erstelle die activity.xml
-                    self._create_activity_xml(activity_dir, activity.activity_id, item, activity.module_name, section.section_id)
-                    
-                    # Erstelle typspezifische XML-Dateien
+
+                    item = self._get_item_by_id(activity.ilias_id) if getattr(activity, 'ilias_id', None) else {}
+                    title = self._resolve_activity_title(activity.title, item, activity.module_name, activity.module_id)
+                    intro_text = self._resolve_activity_intro(activity.intro, item)
+
+                    self._create_activity_xml(
+                        activity_dir=activity_dir,
+                        activity_id=activity.activity_id,
+                        module_id=activity.module_id,
+                        module_name=activity.module_name,
+                        title=title,
+                        section_id=section.section_id,
+                        section_number=section_number,
+                        visible=activity.visible,
+                        intro=intro_text,
+                        item=item
+                    )
+
                     if activity.module_name == 'resource':
-                        self._create_resource_xml(activity_dir, item)
+                        self._create_resource_xml(activity_dir, item, title, intro_text, activity.module_id, activity.activity_id, section_number, activity.visible)
                     elif activity.module_name == 'forum':
-                        self._create_forum_xml(activity_dir, item)
+                        self._create_forum_xml(activity_dir, item, title, intro_text, activity.module_id, activity.activity_id, section_number, activity.visible)
                     elif activity.module_name == 'quiz':
-                        self._create_quiz_xml(activity_dir, item)
+                        self._create_quiz_xml(activity_dir, item, title, intro_text, activity.module_id, activity.activity_id, section_number, activity.visible)
                     elif activity.module_name == 'folder':
-                        self._create_folder_xml(activity_dir, item)
-                    
-                    # Erstelle gemeinsame XML-Dateien für alle Aktivitätstypen
+                        self._create_folder_xml(activity_dir, item, title, intro_text, activity.module_id, activity.activity_id, section_number, activity.visible)
+
                     self._create_inforef_xml(activity_dir)
                     self._create_grades_xml(activity_dir)
                     self._create_roles_xml_for_activity(activity_dir)
-                    self._create_module_xml(activity_dir, activity.activity_id, activity.module_name, section.section_id)
+                    self._create_module_xml(
+                        activity_dir,
+                        module_id=activity.module_id,
+                        module_name=activity.module_name,
+                        section_id=section.section_id,
+                        section_number=section_number,
+                        instance_id=activity.activity_id,
+                        visible=activity.visible
+                    )
                     self._create_additional_activity_files(activity_dir)
         else:
             # ALT: Alte Logik für Fallback
@@ -800,24 +818,47 @@ class MoodleConverter:
                     activity_dir = os.path.join(self.moodle_dir, 'activities', f"{moodle_type}_{activity_id}")
                     os.makedirs(activity_dir, exist_ok=True)
                     
-                    # Erstelle die activity.xml
-                    self._create_activity_xml(activity_dir, activity_id, item, moodle_type, module_index)
+                    module_id = activity_id
+                    section_number = module_index
+                    intro_text = self._resolve_activity_intro('', item)
+                    title = self._resolve_activity_title(item_title, item, moodle_type, module_id)
+
+                    self._create_activity_xml(
+                        activity_dir=activity_dir,
+                        activity_id=activity_id,
+                        module_id=module_id,
+                        module_name=moodle_type,
+                        title=title,
+                        section_id=module_index,
+                        section_number=section_number,
+                        visible=True,
+                        intro=intro_text,
+                        item=item
+                    )
                     
                     # Erstelle typspezifische XML-Dateien
                     if moodle_type == 'resource':
-                        self._create_resource_xml(activity_dir, item)
+                        self._create_resource_xml(activity_dir, item, title, intro_text, module_id, activity_id, section_number, True)
                     elif moodle_type == 'forum':
-                        self._create_forum_xml(activity_dir, item)
+                        self._create_forum_xml(activity_dir, item, title, intro_text, module_id, activity_id, section_number, True)
                     elif moodle_type == 'quiz':
-                        self._create_quiz_xml(activity_dir, item)
+                        self._create_quiz_xml(activity_dir, item, title, intro_text, module_id, activity_id, section_number, True)
                     elif moodle_type == 'folder':
-                        self._create_folder_xml(activity_dir, item)
+                        self._create_folder_xml(activity_dir, item, title, intro_text, module_id, activity_id, section_number, True)
                     
                     # Erstelle gemeinsame XML-Dateien für alle Aktivitätstypen
                     self._create_inforef_xml(activity_dir)
                     self._create_grades_xml(activity_dir)
                     self._create_roles_xml_for_activity(activity_dir)
-                    self._create_module_xml(activity_dir, activity_id, moodle_type, module_index)
+                    self._create_module_xml(
+                        activity_dir,
+                        module_id=module_id,
+                        module_name=moodle_type,
+                        section_id=module_index,
+                        section_number=section_number,
+                        instance_id=activity_id,
+                        visible=True
+                    )
                     self._create_additional_activity_files(activity_dir)
                     
                     # Erhöhe die Aktivitäts-ID
@@ -826,112 +867,138 @@ class MoodleConverter:
     def _get_item_by_id(self, item_id: str) -> Dict[str, Any]:
         """Hilfsmethode um ein Item aus den Components zu holen."""
         for component in self.analyzer.components:
-            if component.get('id') == item_id:
-                return component
+            data = component.get('data', {}) if isinstance(component, dict) else {}
+            component_id = component.get('id') if isinstance(component, dict) else None
+            if component_id and component_id == item_id:
+                return data or component
+
+            if data.get('id') == item_id:
+                result = data.copy()
+                if 'type' not in result and component.get('type'):
+                    result['type'] = component.get('type')
+                if 'title' not in result and component.get('type'):
+                    result['title'] = data.get('title') or component.get('type')
+                return result
         return {}
-    
-    def _create_activity_xml(self, activity_dir, activity_id, item, moodle_type, section_id):
+
+    def _resolve_activity_title(self, fallback_title: Optional[str], item: Dict[str, Any], module_name: str, identifier: Union[int, str]) -> str:
+        """Bestimmt den Titel einer Aktivität mit sinnvollen Fallbacks."""
+        if fallback_title:
+            return fallback_title
+
+        if item:
+            title = item.get('title') or item.get('name')
+            if title:
+                return title
+
+            data = item.get('data') if isinstance(item, dict) else None
+            if isinstance(data, dict):
+                nested_title = data.get('title') or data.get('name')
+                if nested_title:
+                    return nested_title
+
+        return f"{module_name.title()} {identifier}"
+
+    def _resolve_activity_intro(self, fallback_intro: Optional[str], item: Dict[str, Any]) -> str:
+        """Bestimmt den Intro-Text für eine Aktivität."""
+        if fallback_intro:
+            return fallback_intro
+
+        metadata = item.get('metadata') if isinstance(item, dict) else None
+        if isinstance(metadata, dict):
+            for key in ('description', 'intro', 'summary', 'content'):
+                value = metadata.get(key)
+                if value:
+                    return value
+
+        for key in ('description', 'intro', 'summary'):
+            value = item.get(key) if isinstance(item, dict) else None
+            if value:
+                return value
+
+        return ''
+
+    def _create_activity_xml(
+        self,
+        activity_dir: str,
+        activity_id: int,
+        module_id: int,
+        module_name: str,
+        title: str,
+        section_id: int,
+        section_number: int,
+        visible: bool,
+        intro: str,
+        item: Dict[str, Any]
+    ) -> None:
         """Erstellt die activity.xml für eine Aktivität."""
         root = ET.Element('activity')
-        
-        # Aktivitäts-ID
-        id_elem = ET.SubElement(root, 'id')
-        id_elem.text = str(activity_id)
-        
-        # Modulname
-        modulename = ET.SubElement(root, 'modulename')
-        modulename.text = moodle_type
-        
-        # Titel
-        title = ET.SubElement(root, 'title')
-        title.text = item.get('title', 'Unbekanntes Item')
-        
-        # Abschnitt
-        section = ET.SubElement(root, 'section')
-        section.text = str(section_id)
-        
-        # Sichtbarkeit
-        visible = ET.SubElement(root, 'visible')
-        visible.text = '1'
-        
-        # Schreibe die XML-Datei
+        root.set('id', str(activity_id))
+        root.set('moduleid', str(module_id))
+        root.set('modulename', module_name)
+
+        ET.SubElement(root, 'id').text = str(activity_id)
+        ET.SubElement(root, 'moduleid').text = str(module_id)
+        ET.SubElement(root, 'modulename').text = module_name
+        ET.SubElement(root, 'title').text = title
+        ET.SubElement(root, 'section').text = str(section_id)
+        ET.SubElement(root, 'sectionnumber').text = str(section_number)
+        ET.SubElement(root, 'visible').text = '1' if visible else '0'
+
+        intro_elem = ET.SubElement(root, 'intro')
+        intro_elem.text = intro or ''
+        ET.SubElement(root, 'introformat').text = '1'
+
+        timestamp = str(int(datetime.now().timestamp()))
+        ET.SubElement(root, 'timecreated').text = timestamp
+        ET.SubElement(root, 'timemodified').text = timestamp
+
+        ET.SubElement(root, 'availability').text = '$@NULL@$'
+        ET.SubElement(root, 'showdescription').text = '0'
+
+        if item and isinstance(item, dict):
+            ilias_id = item.get('id') or item.get('ref_id') or item.get('obj_id')
+            if ilias_id:
+                ET.SubElement(root, 'ilias_id').text = str(ilias_id)
+
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'activity.xml'))
-    
-    def _create_module_xml(self, activity_dir, activity_id, moodle_type, section_id):
+
+    def _create_module_xml(
+        self,
+        activity_dir: str,
+        module_id: int,
+        module_name: str,
+        section_id: int,
+        section_number: int,
+        instance_id: int,
+        visible: bool
+    ) -> None:
         """Erstellt die module.xml für eine Aktivität."""
         root = ET.Element('module')
-        root.set('id', str(activity_id))
-        
-        # Modulname
-        modulename = ET.SubElement(root, 'modulename')
-        modulename.text = moodle_type
-        
-        # Sectionid
-        sectionid = ET.SubElement(root, 'sectionid')
-        sectionid.text = str(section_id)
-        
-        # Sectionnum
-        sectionnum = ET.SubElement(root, 'sectionnum')
-        sectionnum.text = str(section_id)
-        
-        # Idnumber
-        idnumber = ET.SubElement(root, 'idnumber')
-        idnumber.text = ''
-        
-        # Added
-        added = ET.SubElement(root, 'added')
-        added.text = str(int(datetime.now().timestamp()))
-        
-        # Score
-        score = ET.SubElement(root, 'score')
-        score.text = '0'
-        
-        # Indent
-        indent = ET.SubElement(root, 'indent')
-        indent.text = '0'
-        
-        # Visible
-        visible = ET.SubElement(root, 'visible')
-        visible.text = '1'
-        
-        # Visibleold
-        visibleold = ET.SubElement(root, 'visibleold')
-        visibleold.text = '1'
-        
-        # Groupmode
-        groupmode = ET.SubElement(root, 'groupmode')
-        groupmode.text = '0'
-        
-        # Groupingid
-        groupingid = ET.SubElement(root, 'groupingid')
-        groupingid.text = '0'
-        
-        # Completion
-        completion = ET.SubElement(root, 'completion')
-        completion.text = '0'
-        
-        # Completiongradeitemnumber
-        completiongradeitemnumber = ET.SubElement(root, 'completiongradeitemnumber')
-        completiongradeitemnumber.text = '$@NULL@$'
-        
-        # Completionview
-        completionview = ET.SubElement(root, 'completionview')
-        completionview.text = '0'
-        
-        # Completionexpected
-        completionexpected = ET.SubElement(root, 'completionexpected')
-        completionexpected.text = '0'
-        
-        # Availability
-        availability = ET.SubElement(root, 'availability')
-        availability.text = '$@NULL@$'
-        
-        # Showdescription
-        showdescription = ET.SubElement(root, 'showdescription')
-        showdescription.text = '0'
-        
-        # Schreibe die XML-Datei
+        root.set('id', str(module_id))
+
+        ET.SubElement(root, 'modulename').text = module_name
+        ET.SubElement(root, 'sectionid').text = str(section_id)
+        ET.SubElement(root, 'sectionnum').text = str(section_number)
+        ET.SubElement(root, 'instance').text = str(instance_id)
+        ET.SubElement(root, 'idnumber').text = ''
+
+        timestamp = str(int(datetime.now().timestamp()))
+        ET.SubElement(root, 'added').text = timestamp
+        ET.SubElement(root, 'score').text = '0'
+        ET.SubElement(root, 'indent').text = '0'
+        ET.SubElement(root, 'visible').text = '1' if visible else '0'
+        ET.SubElement(root, 'visibleold').text = '1' if visible else '0'
+        ET.SubElement(root, 'groupmode').text = '0'
+        ET.SubElement(root, 'groupingid').text = '0'
+        ET.SubElement(root, 'completion').text = '0'
+        ET.SubElement(root, 'completiongradeitemnumber').text = '$@NULL@$'
+        ET.SubElement(root, 'completionview').text = '0'
+        ET.SubElement(root, 'completionexpected').text = '0'
+        ET.SubElement(root, 'availability').text = '$@NULL@$'
+        ET.SubElement(root, 'showdescription').text = '0'
+
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'module.xml'))
     
@@ -951,103 +1018,135 @@ class MoodleConverter:
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'roles.xml'))
     
-    def _create_resource_xml(self, activity_dir, item):
+    def _create_resource_xml(
+        self,
+        activity_dir: str,
+        item: Dict[str, Any],
+        title: str,
+        intro: str,
+        module_id: int,
+        instance_id: int,
+        section_number: int,
+        visible: bool
+    ) -> None:
         """Erstellt die resource.xml-Datei für eine Ressource."""
         root = ET.Element('activity')
-        root.set('id', '1')
-        root.set('moduleid', '1')
+        root.set('id', str(instance_id))
+        root.set('moduleid', str(module_id))
         root.set('modulename', 'resource')
         root.set('contextid', '1')
-        
-        # Ressourcen-Informationen
+
         resource = ET.SubElement(root, 'resource')
-        resource.set('id', '1')
-        
-        name = ET.SubElement(resource, 'name')
-        name.text = item.get('title', 'Unbekannte Ressource')
-        
-        intro = ET.SubElement(resource, 'intro')
-        intro.text = item.get('metadata', {}).get('description', '')
-        
-        introformat = ET.SubElement(resource, 'introformat')
-        introformat.text = '1'
-        
-        # Schreibe die XML-Datei
+        resource.set('id', str(instance_id))
+
+        ET.SubElement(resource, 'name').text = title
+        intro_elem = ET.SubElement(resource, 'intro')
+        intro_elem.text = intro or ''
+        ET.SubElement(resource, 'introformat').text = '1'
+        ET.SubElement(resource, 'section').text = str(section_number)
+        ET.SubElement(resource, 'sectionnumber').text = str(section_number)
+        ET.SubElement(resource, 'visible').text = '1' if visible else '0'
+        ET.SubElement(resource, 'timemodified').text = str(int(datetime.now().timestamp()))
+
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'resource.xml'))
-    
-    def _create_forum_xml(self, activity_dir, item):
+
+    def _create_forum_xml(
+        self,
+        activity_dir: str,
+        item: Dict[str, Any],
+        title: str,
+        intro: str,
+        module_id: int,
+        instance_id: int,
+        section_number: int,
+        visible: bool
+    ) -> None:
         """Erstellt die forum.xml-Datei für ein Forum."""
         root = ET.Element('activity')
-        root.set('id', '1')
-        root.set('moduleid', '1')
+        root.set('id', str(instance_id))
+        root.set('moduleid', str(module_id))
         root.set('modulename', 'forum')
         root.set('contextid', '1')
-        
-        # Forum-Informationen
+
         forum = ET.SubElement(root, 'forum')
-        forum.set('id', '1')
-        
-        name = ET.SubElement(forum, 'name')
-        name.text = item.get('title', 'Unbekanntes Forum')
-        
-        intro = ET.SubElement(forum, 'intro')
-        intro.text = item.get('metadata', {}).get('description', '')
-        
-        introformat = ET.SubElement(forum, 'introformat')
-        introformat.text = '1'
-        
-        # Schreibe die XML-Datei
+        forum.set('id', str(instance_id))
+
+        ET.SubElement(forum, 'name').text = title
+        intro_elem = ET.SubElement(forum, 'intro')
+        intro_elem.text = intro or ''
+        ET.SubElement(forum, 'introformat').text = '1'
+        ET.SubElement(forum, 'section').text = str(section_number)
+        ET.SubElement(forum, 'sectionnumber').text = str(section_number)
+        ET.SubElement(forum, 'visible').text = '1' if visible else '0'
+        ET.SubElement(forum, 'timemodified').text = str(int(datetime.now().timestamp()))
+
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'forum.xml'))
-    
-    def _create_quiz_xml(self, activity_dir, item):
+
+    def _create_quiz_xml(
+        self,
+        activity_dir: str,
+        item: Dict[str, Any],
+        title: str,
+        intro: str,
+        module_id: int,
+        instance_id: int,
+        section_number: int,
+        visible: bool
+    ) -> None:
         """Erstellt die quiz.xml-Datei für ein Quiz."""
         root = ET.Element('activity')
-        root.set('id', '1')
-        root.set('moduleid', '1')
+        root.set('id', str(instance_id))
+        root.set('moduleid', str(module_id))
         root.set('modulename', 'quiz')
         root.set('contextid', '1')
-        
-        # Quiz-Informationen
+
         quiz = ET.SubElement(root, 'quiz')
-        quiz.set('id', '1')
-        
-        name = ET.SubElement(quiz, 'name')
-        name.text = item.get('title', 'Unbekanntes Quiz')
-        
-        intro = ET.SubElement(quiz, 'intro')
-        intro.text = item.get('metadata', {}).get('description', '')
-        
-        introformat = ET.SubElement(quiz, 'introformat')
-        introformat.text = '1'
-        
-        # Schreibe die XML-Datei
+        quiz.set('id', str(instance_id))
+
+        ET.SubElement(quiz, 'name').text = title
+        intro_elem = ET.SubElement(quiz, 'intro')
+        intro_elem.text = intro or ''
+        ET.SubElement(quiz, 'introformat').text = '1'
+        ET.SubElement(quiz, 'section').text = str(section_number)
+        ET.SubElement(quiz, 'sectionnumber').text = str(section_number)
+        ET.SubElement(quiz, 'visible').text = '1' if visible else '0'
+        ET.SubElement(quiz, 'timemodified').text = str(int(datetime.now().timestamp()))
+
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'quiz.xml'))
-    
-    def _create_folder_xml(self, activity_dir, item):
+
+    def _create_folder_xml(
+        self,
+        activity_dir: str,
+        item: Dict[str, Any],
+        title: str,
+        intro: str,
+        module_id: int,
+        instance_id: int,
+        section_number: int,
+        visible: bool
+    ) -> None:
         """Erstellt die folder.xml-Datei für einen Ordner."""
         root = ET.Element('activity')
-        root.set('id', '1')
-        root.set('moduleid', '1')
+        root.set('id', str(instance_id))
+        root.set('moduleid', str(module_id))
         root.set('modulename', 'folder')
         root.set('contextid', '1')
-        
-        # Ordner-Informationen
+
         folder = ET.SubElement(root, 'folder')
-        folder.set('id', '1')
-        
-        name = ET.SubElement(folder, 'name')
-        name.text = item.get('title', 'Unbekannter Ordner')
-        
-        intro = ET.SubElement(folder, 'intro')
-        intro.text = item.get('metadata', {}).get('description', '')
-        
-        introformat = ET.SubElement(folder, 'introformat')
-        introformat.text = '1'
-        
-        # Schreibe die XML-Datei
+        folder.set('id', str(instance_id))
+
+        ET.SubElement(folder, 'name').text = title
+        intro_elem = ET.SubElement(folder, 'intro')
+        intro_elem.text = intro or ''
+        ET.SubElement(folder, 'introformat').text = '1'
+        ET.SubElement(folder, 'section').text = str(section_number)
+        ET.SubElement(folder, 'sectionnumber').text = str(section_number)
+        ET.SubElement(folder, 'visible').text = '1' if visible else '0'
+        ET.SubElement(folder, 'timemodified').text = str(int(datetime.now().timestamp()))
+
         tree = ET.ElementTree(root)
         self._write_xml_file(tree, os.path.join(activity_dir, 'folder.xml'))
     
