@@ -97,6 +97,14 @@ class IliasAnalyzer:
                     logger.error(f"Keine manifest.xml gefunden in {self.export_dir}")
                     logger.info(f"Verzeichnisinhalt: {os.listdir(self.export_dir)}")
                     return False
+
+            # Sicherstellen, dass export_dir auf das Manifest-Verzeichnis zeigt
+            manifest_dir = os.path.dirname(manifest_path)
+            if os.path.normpath(manifest_dir) != os.path.normpath(self.export_dir):
+                logger.info(
+                    f"Passe Basis-Verzeichnis an: {manifest_dir} (vorher: {self.export_dir})"
+                )
+                self.export_dir = manifest_dir
             
             # Prüfen, ob die Manifest-Datei existiert
             if not os.path.exists(manifest_path):
@@ -118,39 +126,39 @@ class IliasAnalyzer:
             
             logger.info(f"Analysiere Kurs: {self.course_title}")
             
+            # --- START DER KORREKTUR ---
+            
             # Export-Sets finden
             export_sets = []
-            logger.info(f"Suche Export-Sets in {self.export_dir}")
+            logger.info(f"Suche Export-Sets in {os.path.basename(manifest_path)}")
+
+            # Parse ExportSet entries from the main manifest
+            for set_elem in root.findall('ExportSet'):
+                set_path = set_elem.get('Path')
+                if set_path:
+                    # Erstelle den vollständigen Pfad basierend auf dem export_dir
+                    full_set_path = os.path.join(self.export_dir, set_path)
+                    if os.path.isdir(full_set_path):
+                        export_sets.append(full_set_path)
+                        logger.info(f"Export-Set gefunden: {full_set_path}")
+                    else:
+                        logger.warning(f"Export-Set Pfad nicht gefunden: {full_set_path}")
             
-            # Suche nach dem Hauptverzeichnis des Kurses
-            course_dir = None
-            for item in os.listdir(self.export_dir):
-                item_path = os.path.join(self.export_dir, item)
-                if os.path.isdir(item_path) and item.startswith("1728475996__13869__grp_"):
-                    course_dir = item_path
-                    logger.info(f"Kurs-Hauptverzeichnis gefunden: {course_dir}")
-                    break
-            
-            if course_dir:
-                # Suche nach Export-Sets im Kurs-Verzeichnis
-                for item in os.listdir(course_dir):
-                    if item.startswith("set_"):
-                        set_path = os.path.join(course_dir, item)
-                        if os.path.isdir(set_path):
-                            export_sets.append(set_path)
-                            logger.info(f"Export-Set gefunden: {set_path}")
-            else:
-                # Fallback: Suche nach manifest.xml in Unterverzeichnissen
-                for root, dirs, files in os.walk(self.export_dir):
-                    if "manifest.xml" in files and root != self.export_dir:
-                        export_sets.append(root)
-                        logger.info(f"Export-Set gefunden: {root}")
-            
+            if not export_sets:
+                logger.error(f"Keine ExportSet-Einträge in {os.path.basename(manifest_path)} gefunden.")
+                # Fallback: Versuche, das aktuelle Verzeichnis als Export-Set zu verwenden
+                # (Dies ist für den Fall, dass der Benutzer einen Unterordner hochlädt)
+                logger.info(f"Verwende Fallback: Analysiere {self.export_dir} als einzelnes Set.")
+                export_sets.append(self.export_dir)
+
             logger.info(f"Gefundene Export-Sets: {len(export_sets)}")
+
+            # --- ENDE DER KORREKTUR ---
             
             # Komponenten in den Export-Sets analysieren
-            for set_path in export_sets:
-                self._analyze_export_set(set_path)
+            # Jeder "Export-Set" Pfad IST ein Komponenten-Verzeichnis
+            for component_path in export_sets:
+                self._analyze_component(component_path)
             
             # Versuche, die Container-Struktur zu parsen (falls vorhanden)
             self._parse_container_structure(export_sets)
@@ -351,8 +359,8 @@ class IliasAnalyzer:
                 logger.error(f"Fehler beim Parsen der Manifest-Datei {manifest_path}: {str(e)}")
                 return
             
-            # Komponententyp ermitteln
-            component_type = root.get("type", "unknown")
+            # Komponententyp ermitteln (MainEntity ist das korrekte Attribut in ILIAS-Manifesten)
+            component_type = root.get("MainEntity", "unknown")
             logger.info(f"Komponententyp ermittelt: {component_type}")
             
             # Titel aus dem Manifest extrahieren, falls vorhanden

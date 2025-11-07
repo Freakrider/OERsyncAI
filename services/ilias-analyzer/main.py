@@ -300,12 +300,31 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
         
         # If MBZ was analyzed, use that data
         if mbz_analysis_result:
+            # Erstelle ILIAS analysis_data auch für MBZ-Konvertierungen
+            analysis_data = {
+                "course_title": analyzer.course_title,
+                "installation_id": analyzer.installation_id,
+                "installation_url": analyzer.installation_url,
+                "modules_count": len(analyzer.modules),
+                "has_container_structure": analyzer.container_structure is not None,
+                "modules": [
+                    {
+                        "id": module.id,
+                        "title": module.title,
+                        "type": module.type,
+                        "items": module.items
+                    }
+                    for module in analyzer.modules
+                ]
+            }
+            
             update_job_status(
                 job_id,
                 "completed",
                 "ILIAS successfully converted to MBZ and analyzed!",
                 completed_at=datetime.now(),
                 processing_time_seconds=processing_time,
+                analysis_data=analysis_data,  # NEU: ILIAS Module hinzufügen
                 extracted_data=mbz_analysis_result.get('extracted_data'),
                 moodle_mbz_available=True,
                 mbz_path=mbz_path,

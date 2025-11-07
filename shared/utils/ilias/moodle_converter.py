@@ -680,36 +680,70 @@ class MoodleConverter:
         """Erstellt die course/sections.xml-Datei."""
         root = ET.Element('sections')
         
-        # Allgemeiner Abschnitt
-        section = ET.SubElement(root, 'section')
-        
-        section_id = ET.SubElement(section, 'id')
-        section_id.text = '0'
-        
-        section_number = ET.SubElement(section, 'number')
-        section_number.text = '0'
-        
-        section_name = ET.SubElement(section, 'name')
-        section_name.text = 'Allgemein'
-        
-        section_summary = ET.SubElement(section, 'summary')
-        section_summary.text = 'Allgemeiner Abschnitt'
-        
-        # Module als Abschnitte
-        for i, module in enumerate(self.analyzer.modules, 1):
+        # NEU: Nutze MoodleStructure wenn verfügbar
+        if self.moodle_structure:
+            # Neue Struktur-basierte Generierung
+            for moodle_section in self.moodle_structure.sections:
+                section = ET.SubElement(root, 'section')
+                
+                section_id = ET.SubElement(section, 'id')
+                section_id.text = str(moodle_section.section_id)
+                
+                section_number = ET.SubElement(section, 'number')
+                section_number.text = str(moodle_section.number)
+                
+                section_name = ET.SubElement(section, 'name')
+                section_name.text = moodle_section.name
+                
+                section_summary = ET.SubElement(section, 'summary')
+                section_summary.text = moodle_section.summary
+                
+                # Activity-IDs als Sequence hinzufügen
+                if moodle_section.activities:
+                    sequence = ET.SubElement(section, 'sequence')
+                    activity_ids = [str(activity.module_id) for activity in moodle_section.activities]
+                    sequence.text = ','.join(activity_ids)
+                else:
+                    sequence = ET.SubElement(section, 'sequence')
+                    sequence.text = ''
+                
+                visible = ET.SubElement(section, 'visible')
+                visible.text = '1' if moodle_section.visible else '0'
+                
+                timemodified = ET.SubElement(section, 'timemodified')
+                timemodified.text = str(int(datetime.now().timestamp()))
+        else:
+            # ALT: Alte Logik als Fallback
+            # Allgemeiner Abschnitt
             section = ET.SubElement(root, 'section')
             
             section_id = ET.SubElement(section, 'id')
-            section_id.text = str(i)
+            section_id.text = '0'
             
             section_number = ET.SubElement(section, 'number')
-            section_number.text = str(i)
+            section_number.text = '0'
             
             section_name = ET.SubElement(section, 'name')
-            section_name.text = module.title
+            section_name.text = 'Allgemein'
             
             section_summary = ET.SubElement(section, 'summary')
-            section_summary.text = getattr(module, 'description', '') or f"Abschnitt für {module.title}"
+            section_summary.text = 'Allgemeiner Abschnitt'
+            
+            # Module als Abschnitte
+            for i, module in enumerate(self.analyzer.modules, 1):
+                section = ET.SubElement(root, 'section')
+                
+                section_id = ET.SubElement(section, 'id')
+                section_id.text = str(i)
+                
+                section_number = ET.SubElement(section, 'number')
+                section_number.text = str(i)
+                
+                section_name = ET.SubElement(section, 'name')
+                section_name.text = module.title
+                
+                section_summary = ET.SubElement(section, 'summary')
+                section_summary.text = getattr(module, 'description', '') or f"Abschnitt für {module.title}"
         
         # Schreibe die XML-Datei
         tree = ET.ElementTree(root)
@@ -1147,29 +1181,49 @@ class MoodleConverter:
         sections_dir = os.path.join(self.moodle_dir, 'sections')
         os.makedirs(sections_dir, exist_ok=True)
         
-        # Erstelle Abschnitt 0 (Allgemeiner Abschnitt)
-        section_dir = os.path.join(sections_dir, 'section_0')
-        os.makedirs(section_dir, exist_ok=True)
-        
-        # Erstelle section.xml für Abschnitt 0
-        self._create_section_xml(section_dir, 0, 'Allgemein')
-        
-        # Erstelle inforef.xml für Abschnitt 0
-        self._create_inforef_xml(section_dir)
-        
-        # Erstelle Abschnitte für Module
-        for i, module in enumerate(self.analyzer.modules, 1):
-            section_dir = os.path.join(sections_dir, f'section_{i}')
+        # NEU: Nutze MoodleStructure wenn verfügbar
+        if self.moodle_structure:
+            # Neue Struktur-basierte Generierung
+            for moodle_section in self.moodle_structure.sections:
+                section_dir = os.path.join(sections_dir, f'section_{moodle_section.section_id}')
+                os.makedirs(section_dir, exist_ok=True)
+                
+                # Erstelle section.xml mit allen Details
+                self._create_section_xml_detailed(
+                    section_dir, 
+                    moodle_section.section_id, 
+                    moodle_section.name,
+                    moodle_section.summary,
+                    moodle_section.activities
+                )
+                
+                # Erstelle inforef.xml
+                self._create_inforef_xml(section_dir)
+        else:
+            # ALT: Alte Logik als Fallback
+            # Erstelle Abschnitt 0 (Allgemeiner Abschnitt)
+            section_dir = os.path.join(sections_dir, 'section_0')
             os.makedirs(section_dir, exist_ok=True)
             
-            # Erstelle section.xml
-            self._create_section_xml(section_dir, i, module.title)
+            # Erstelle section.xml für Abschnitt 0
+            self._create_section_xml(section_dir, 0, 'Allgemein')
             
-            # Erstelle inforef.xml
+            # Erstelle inforef.xml für Abschnitt 0
             self._create_inforef_xml(section_dir)
+            
+            # Erstelle Abschnitte für Module
+            for i, module in enumerate(self.analyzer.modules, 1):
+                section_dir = os.path.join(sections_dir, f'section_{i}')
+                os.makedirs(section_dir, exist_ok=True)
+                
+                # Erstelle section.xml
+                self._create_section_xml(section_dir, i, module.title)
+                
+                # Erstelle inforef.xml
+                self._create_inforef_xml(section_dir)
     
     def _create_section_xml(self, section_dir, section_id, section_name):
-        """Erstellt die section.xml für einen Abschnitt."""
+        """Erstellt die section.xml für einen Abschnitt (alte Methode für Fallback)."""
         root = ET.Element('section')
         root.set('id', str(section_id))
         
@@ -1200,6 +1254,51 @@ class MoodleConverter:
         # Sichtbarkeit
         visible = ET.SubElement(root, 'visible')
         visible.text = '1'
+        
+        # Schreibe die XML-Datei
+        tree = ET.ElementTree(root)
+        self._write_xml_file(tree, os.path.join(section_dir, 'section.xml'))
+    
+    def _create_section_xml_detailed(self, section_dir, section_id, section_name, section_summary, activities):
+        """Erstellt die section.xml für einen Abschnitt mit vollständigen Details (neue Methode)."""
+        root = ET.Element('section')
+        root.set('id', str(section_id))
+        
+        # ID
+        id_elem = ET.SubElement(root, 'id')
+        id_elem.text = str(section_id)
+        
+        # Nummer
+        number = ET.SubElement(root, 'number')
+        number.text = str(section_id)
+        
+        # Name
+        name = ET.SubElement(root, 'name')
+        name.text = section_name
+        
+        # Zusammenfassung
+        summary = ET.SubElement(root, 'summary')
+        summary.text = section_summary or ''
+        
+        # Zusammenfassungsformat
+        summaryformat = ET.SubElement(root, 'summaryformat')
+        summaryformat.text = '1'
+        
+        # Sequenz (Activity-IDs)
+        sequence = ET.SubElement(root, 'sequence')
+        if activities:
+            activity_ids = [str(activity.module_id) for activity in activities]
+            sequence.text = ','.join(activity_ids)
+        else:
+            sequence.text = ''
+        
+        # Sichtbarkeit
+        visible = ET.SubElement(root, 'visible')
+        visible.text = '1'
+        
+        # Zeitstempel
+        timemodified = ET.SubElement(root, 'timemodified')
+        timemodified.text = str(int(datetime.now().timestamp()))
         
         # Schreibe die XML-Datei
         tree = ET.ElementTree(root)

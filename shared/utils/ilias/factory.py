@@ -22,6 +22,7 @@ class ParserFactory:
     # Mapping von Komponententypen zu Parser-Klassen
     _parsers: Dict[str, Type[IliasComponentParser]] = {
         'grp': GroupParser,
+        'fold': GroupParser,  # Folder (Ordner) sind strukturell ähnlich zu Groups
         'tst': TestParser,
         'mcst': MediaCastParser,
         'file': FileParser,
