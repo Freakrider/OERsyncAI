@@ -1,7 +1,7 @@
 import React from 'react';
 import { BookOpen, Layers, FileText, Download, CheckCircle, AlertTriangle, Info, XCircle } from 'lucide-react';
 
-export default function IliasAnalysisView({ data }) {
+export default function IliasAnalysisView({ data, showOnlyLogs = false }) {
   const analysisData = data?.analysis_data;
   const analysisLogs = data?.analysis_logs;
   const ILIAS_API_BASE_URL = import.meta.env.VITE_ILIAS_API_URL || 'http://localhost:8004';
@@ -10,7 +10,8 @@ export default function IliasAnalysisView({ data }) {
   React.useEffect(() => {
     console.log('🔍 IliasAnalysisView data:', data);
     console.log('🔍 analysis_logs:', analysisLogs);
-  }, [data, analysisLogs]);
+    console.log('🔍 showOnlyLogs:', showOnlyLogs);
+  }, [data, analysisLogs, showOnlyLogs]);
   
   // Log die Analyse-Logs ins Browser-Console
   React.useEffect(() => {
@@ -34,6 +35,67 @@ export default function IliasAnalysisView({ data }) {
       console.warn('⚠️ Keine analysis_logs gefunden oder leeres Array');
     }
   }, [analysisLogs]);
+  
+  // If showOnlyLogs is true, only render the logs section
+  if (showOnlyLogs) {
+    return analysisLogs && analysisLogs.length > 0 ? (
+      <div style={{
+        background: 'white',
+        borderRadius: '12px',
+        padding: '24px',
+        border: '1px solid #e2e8f0',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+      }}>
+        <h3 style={{ 
+          marginBottom: '16px', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '8px',
+          fontSize: '18px',
+          fontWeight: 'bold',
+          color: '#002b44'
+        }}>
+          📋 ILIAS Konvertierungslogs
+        </h3>
+        <div style={{
+          maxHeight: '400px',
+          overflowY: 'auto',
+          background: '#f8fafc',
+          borderRadius: '8px',
+          padding: '16px',
+          fontFamily: 'monospace',
+          fontSize: '13px'
+        }}>
+          {analysisLogs.map((log, idx) => (
+            <div 
+              key={idx}
+              style={{
+                padding: '6px 8px',
+                borderLeft: `3px solid ${
+                  log.level === 'ERROR' ? '#ef4444' :
+                  log.level === 'WARNING' ? '#f59e0b' :
+                  log.level === 'INFO' ? '#3b82f6' :
+                  '#94a3b8'
+                }`,
+                marginBottom: '4px',
+                background: 'white',
+                borderRadius: '4px',
+                color: log.level === 'ERROR' ? '#dc2626' : log.level === 'WARNING' ? '#d97706' : '#475569'
+              }}
+            >
+              <span style={{ color: '#64748b', fontSize: '11px', marginRight: '8px' }}>
+                {log.timestamp}
+              </span>
+              <span style={{ fontWeight: 'bold', marginRight: '8px' }}>
+                [{log.level}]
+              </span>
+              <span>{log.message}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    ) : null;
+  }
   
   if (!analysisData) {
     return <div>Keine ILIAS-Daten verfügbar</div>;

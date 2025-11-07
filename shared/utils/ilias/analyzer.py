@@ -484,10 +484,10 @@ class IliasAnalyzer:
                             for child in structure.root_item.children:
                                 logger.info(f"  - {child.title} ({child.item_type}, RefId={child.ref_id})")
                         
-                        # Wenn dies eine Gruppe ist, sind wir fertig
+                        # Wenn dies eine Gruppe oder ein Kurs ist, sind wir fertig
                         # Ansonsten könnte es noch ein besseres Export-Set geben
-                        if structure.root_item.item_type == "grp":
-                            logger.info("Gruppen-Container gefunden, verwende diesen als Hauptstruktur")
+                        if structure.root_item.item_type in ["grp", "crs"]:
+                            logger.info(f"{structure.root_item.item_type.upper()}-Container gefunden, verwende diesen als Hauptstruktur")
                             return
         
         except Exception as e:
@@ -502,12 +502,12 @@ class IliasAnalyzer:
             logger.warning("Keine Komponenten gefunden, aus denen Module erstellt werden könnten")
             return
         
-        # Zuerst die Hauptgruppe finden, falls vorhanden
+        # Zuerst die Hauptgruppe/den Hauptkurs finden, falls vorhanden
         main_group = None
         for component in self.components:
-            if component["type"] == "grp" and "Minimalst Adaptiv" in component["data"].get("title", ""):
+            if component["type"] in ["grp", "crs"] and "Minimalst Adaptiv" in component["data"].get("title", ""):
                 main_group = component
-                logger.info(f"Hauptgruppe gefunden: {component['data'].get('title', 'Unbekannt')}")
+                logger.info(f"Hauptcontainer gefunden: {component['data'].get('title', 'Unbekannt')}")
                 break
         
         # Wenn eine Hauptgruppe gefunden wurde, versuche die Struktur zu extrahieren
@@ -546,7 +546,7 @@ class IliasAnalyzer:
             logger.info(f"Modul erstellt: {module.title} ({module.type})")
             
             # Items je nach Komponententyp hinzufügen
-            if comp_type == "grp":
+            if comp_type in ["grp", "crs"]:
                 # Gruppeneinstellungen
                 if "registration" in comp_data:
                     reg = comp_data["registration"]

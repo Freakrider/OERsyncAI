@@ -424,9 +424,9 @@ class StructureMapper:
                 section = self._create_section_for_item(item, structure)
                 self._add_activity_to_section(item, section, structure)
         
-        elif item_type == 'grp':
-            # Group (sollte nur Root sein) → Verarbeite Kinder
-            structure.add_warning(f"Gruppe '{item.title}' als Kind gefunden - wird übersprungen")
+        elif item_type in ['grp', 'crs']:
+            # Group/Course (sollte nur Root sein) → Verarbeite Kinder
+            structure.add_warning(f"{item_type.upper()} '{item.title}' als Kind gefunden - wird übersprungen")
         
         else:
             # Unbekannter Typ → Warnung

@@ -158,6 +158,10 @@ function MainApp() {
             <>
               <CourseSummary data={courseData} />
               <MetadataDisplay data={courseData} />
+              {/* Show ILIAS analysis logs if available (for converted files) */}
+              {courseData.analysis_data && courseData.ilias_source && (
+                <IliasAnalysisView data={courseData} showOnlyLogs={true} />
+              )}
             </>
           )}
           {/* If we only have analysis_data (pure ILIAS), show ILIAS view */}

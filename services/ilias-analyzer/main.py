@@ -208,13 +208,16 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
         mbz_path = None
         mbz_analysis_result = None
         conversion_report = None
+        structure_info = None  # Initialize here
         
         if convert_to_moodle:
             update_job_status(job_id, "processing", "Converting to Moodle format...")
             
             try:
+                logger.info("Starting Moodle conversion", job_id=job_id)
                 converter = MoodleConverter(analyzer)
                 mbz_path = converter.convert(generate_report=True)
+                logger.info("Moodle conversion completed", job_id=job_id, mbz_path=mbz_path, mbz_size=os.path.getsize(mbz_path))
                 
                 # Hole Conversion-Report wenn verfügbar
                 if converter.conversion_report:
@@ -269,42 +272,69 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
                 
                 # Send MBZ to extractor service
                 import aiohttp
+                extractor_url = os.getenv('EXTRACTOR_URL', 'http://localhost:8001')
+                logger.info("Sending MBZ to extractor", job_id=job_id, extractor_url=extractor_url, mbz_path=mbz_path)
+                
                 async with aiohttp.ClientSession() as session:
                     with open(mbz_path, 'rb') as mbz_file:
                         data = aiohttp.FormData()
                         data.add_field('file', mbz_file, filename=os.path.basename(mbz_path))
                         
                         # Call extractor service
-                        extractor_url = os.getenv('EXTRACTOR_URL', 'http://localhost:8001')
+                        logger.debug("Posting MBZ to extractor", job_id=job_id, url=f'{extractor_url}/extract')
                         async with session.post(f'{extractor_url}/extract', data=data) as resp:
+                            logger.info("Extractor response received", job_id=job_id, status=resp.status)
                             if resp.status == 200:
                                 extractor_result = await resp.json()
                                 extractor_job_id = extractor_result['job_id']
-                                logger.info("MBZ sent to extractor", job_id=job_id, extractor_job_id=extractor_job_id)
+                                logger.info("MBZ sent to extractor successfully", job_id=job_id, extractor_job_id=extractor_job_id)
                                 
                                 # Poll extractor for results
                                 max_attempts = 60
                                 for attempt in range(max_attempts):
                                     await asyncio.sleep(2)
+                                    logger.debug("Polling extractor for results", job_id=job_id, attempt=attempt+1, max_attempts=max_attempts)
                                     async with session.get(f'{extractor_url}/extract/{extractor_job_id}') as status_resp:
                                         status_data = await status_resp.json()
+                                        logger.debug("Extractor status", job_id=job_id, extractor_status=status_data['status'])
                                         if status_data['status'] == 'completed':
                                             mbz_analysis_result = status_data
-                                            logger.info("MBZ analysis completed", job_id=job_id)
+                                            logger.info("MBZ analysis completed successfully", job_id=job_id, 
+                                                       sections_count=len(status_data.get('extracted_data', {}).get('sections', [])),
+                                                       activities_count=len(status_data.get('extracted_data', {}).get('activities', [])))
                                             break
                                         elif status_data['status'] == 'failed':
-                                            raise Exception(f"MBZ analysis failed: {status_data.get('error_message', 'Unknown error')}")
+                                            error_msg = status_data.get('error_message', 'Unknown error')
+                                            logger.error("Extractor analysis failed", job_id=job_id, error=error_msg)
+                                            raise Exception(f"MBZ analysis failed: {error_msg}")
+                                else:
+                                    logger.error("Extractor polling timeout", job_id=job_id)
+                                    raise Exception("MBZ analysis timeout - extractor did not complete in time")
                             else:
-                                raise Exception(f"Failed to send MBZ to extractor: HTTP {resp.status}")
+                                error_text = await resp.text()
+                                logger.error("Failed to send MBZ to extractor", job_id=job_id, status=resp.status, error=error_text)
+                                raise Exception(f"Failed to send MBZ to extractor: HTTP {resp.status} - {error_text}")
                 
             except Exception as e:
-                logger.error("Moodle conversion/analysis failed", job_id=job_id, error=str(e))
-                raise Exception(f"Conversion failed: {str(e)}")
+                logger.error("Moodle conversion/analysis failed", job_id=job_id, error=str(e), exc_info=True)
+                # Check if it's an extractor communication error
+                if "extractor" in str(e).lower() or "connection" in str(e).lower():
+                    logger.warning("Extractor service nicht verfügbar - Fallback ohne Extractor-Analyse", job_id=job_id)
+                    # Conversion was successful, but extractor failed
+                    # Continue without extractor analysis - user can still download MBZ
+                    if mbz_path and os.path.exists(mbz_path):
+                        logger.info("MBZ-Datei wurde erfolgreich erstellt, aber Extractor-Analyse fehlgeschlagen", 
+                                   job_id=job_id, mbz_path=mbz_path)
+                        # Don't raise exception - continue with fallback
+                    else:
+                        raise Exception(f"Conversion failed: {str(e)}")
+                else:
+                    raise Exception(f"Conversion failed: {str(e)}")
         
         processing_time = time.time() - start_time
         
-        # If MBZ was analyzed, use that data
-        if mbz_analysis_result:
+        # If MBZ was analyzed, use that data (from extractor)
+        if mbz_analysis_result and mbz_analysis_result.get('extracted_data'):
             # Erstelle ILIAS analysis_data auch für MBZ-Konvertierungen
             analysis_data = {
                 "course_title": analyzer.course_title,
@@ -364,13 +394,29 @@ async def process_ilias_analysis(job_id: str, file_path: Path, original_filename
             # Wenn konvertiert wurde (aber keine extractor-Analyse), markiere MBZ als verfügbar
             is_mbz_available = convert_to_moodle and mbz_path is not None
             
+            # Erstelle minimale extracted_data aus Moodle-Struktur wenn Extractor fehlgeschlagen
+            extracted_data_fallback = None
+            if is_mbz_available and structure_info:
+                logger.info("Erstelle Fallback extracted_data aus Moodle-Struktur", job_id=job_id)
+                extracted_data_fallback = {
+                    "course_name": analysis_data.get('course_title', 'Konvertierter ILIAS-Kurs'),
+                    "course_summary": f"Aus ILIAS konvertiert - {structure_info['sections_count']} Sections, {structure_info['activities_count']} Activities",
+                    "sections": structure_info.get('sections', []),
+                    "activities": sum([s.get('activities_count', 0) for s in structure_info.get('sections', [])]),
+                    "moodle_version": "Converted from ILIAS",
+                    "backup_date": datetime.now().isoformat(),
+                    "warning": "⚠️ Extractor-Service nicht verfügbar - Nur Struktur-Übersicht. Bitte MBZ-Datei herunterladen für vollständige Inhalte."
+                }
+            
             update_job_status(
                 job_id,
                 "completed",
-                f"ILIAS {'converted to Moodle' if is_mbz_available else 'analysis completed'}. Found {len(analyzer.modules)} modules.",
+                f"ILIAS {'converted to Moodle' if is_mbz_available else 'analysis completed'}. Found {len(analyzer.modules)} modules." + 
+                (" (Extractor-Analyse fehlgeschlagen - nur Struktur-Übersicht)" if is_mbz_available and extracted_data_fallback else ""),
                 completed_at=datetime.now(),
                 processing_time_seconds=processing_time,
                 analysis_data=analysis_data,
+                extracted_data=extracted_data_fallback,  # NEU: Fallback-Daten wenn Extractor fehlschlägt
                 moodle_mbz_available=is_mbz_available,
                 mbz_path=mbz_path if is_mbz_available else None,
                 conversion_report=conversion_report if is_mbz_available else None,  # NEW
